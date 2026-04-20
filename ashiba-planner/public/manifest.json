@@ -1,0 +1,14 @@
+{
+  "short_name": "足場プランナー",
+  "name": "足場プランナー - ASHIBA PLANNER",
+  "description": "足場の図面・積算・現場管理アプリ",
+  "icons": [
+    { "src": "icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any maskable" },
+    { "src": "icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any maskable" }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0f1923",
+  "background_color": "#0f1923"
+}
