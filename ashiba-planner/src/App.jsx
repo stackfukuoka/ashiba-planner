@@ -340,7 +340,190 @@ export default function App() {
     {key:"building",label:"🏠 建物"},
     {key:"scaffold",label:"⊞ 足場"},
     {key:"estimate",label:"💰 積算"},
+    {key:"pdf",     label:"🖨️ PDF出力"},
   ];
+
+  // グリッドをSVG文字列に変換（PDF印刷用）
+  const gridToSVG = (grid, parts, cellPx) => {
+    const W = GRID_COLS * cellPx;
+    const H = GRID_ROWS * cellPx;
+    let cells = "";
+    grid.forEach((row, ri) => row.forEach((cell, ci) => {
+      if (!cell) return;
+      const p = parts[cell];
+      if (!p) return;
+      const x = ci * cellPx, y = ri * cellPx;
+      cells += `<rect x="${x}" y="${y}" width="${cellPx}" height="${cellPx}" fill="${p.color}" opacity="0.85"/>`;
+      cells += `<text x="${x+cellPx/2}" y="${y+cellPx/2+4}" text-anchor="middle" font-size="${cellPx*0.4}" font-weight="bold" fill="white">${p.symbol}</text>`;
+    }));
+    // グリッド線
+    let lines = "";
+    for (let c=0;c<=GRID_COLS;c++) {
+      const x = c*cellPx;
+      const sw = c%5===0?"0.6":"0.3";
+      lines += `<line x1="${x}" y1="0" x2="${x}" y2="${H}" stroke="#888" stroke-width="${sw}"/>`;
+    }
+    for (let r=0;r<=GRID_ROWS;r++) {
+      const y = r*cellPx;
+      const sw = r%5===0?"0.6":"0.3";
+      lines += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#888" stroke-width="${sw}"/>`;
+    }
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" style="border:1px solid #333">${lines}${cells}</svg>`;
+  };
+
+  // PDF印刷用HTML生成＆新規ウィンドウで印刷
+  const printPDF = () => {
+    const cellPx = 18; // 印刷用セルサイズ
+    const bSVG = gridToSVG(bGridRef.current, BUILDING_PARTS, cellPx);
+    const sSVG = gridToSVG(sGridRef.current, SCAFFOLD_PARTS, cellPx);
+    const scaleM = (GRID_COLS * MM_PER_CELL / 1000).toFixed(1);
+    const scaleN = (GRID_ROWS * MM_PER_CELL / 1000).toFixed(1);
+
+    const partRows = Object.entries(SCAFFOLD_PARTS).map(([key,part]) => {
+      const cnt = adjCounts[key];
+      const unitPrice = prices[key]||0;
+      return `<tr>
+        <td style="padding:3px 6px;border:1px solid #ccc;">${part.label}</td>
+        <td style="padding:3px 6px;border:1px solid #ccc;text-align:center;">${cnt}</td>
+        <td style="padding:3px 6px;border:1px solid #ccc;text-align:center;">${part.unit}</td>
+        <td style="padding:3px 6px;border:1px solid #ccc;text-align:right;">¥${unitPrice.toLocaleString()}</td>
+        <td style="padding:3px 6px;border:1px solid #ccc;text-align:right;font-weight:bold;">¥${(cnt*unitPrice).toLocaleString()}</td>
+      </tr>`;
+    }).join("");
+
+    const surveyRows = CHECK_DEFS.survey.items.map(item =>
+      `<tr><td style="padding:2px 6px;border:1px solid #ccc;">${item}</td><td style="padding:2px 6px;border:1px solid #ccc;text-align:center;">${surveyChecks.includes(item)?"✓":""}</td></tr>`
+    ).join("");
+    const setupRows = CHECK_DEFS.setup.items.map(item =>
+      `<tr><td style="padding:2px 6px;border:1px solid #ccc;">${item}</td><td style="padding:2px 6px;border:1px solid #ccc;text-align:center;">${setupChecks.includes(item)?"✓":""}</td></tr>`
+    ).join("");
+    const payRows = CHECK_DEFS.payment.items.map(item =>
+      `<tr><td style="padding:2px 6px;border:1px solid #ccc;">${item}</td><td style="padding:2px 6px;border:1px solid #ccc;text-align:center;">${payChecks.includes(item)?"✓":""}</td></tr>`
+    ).join("");
+
+    const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"/>
+<title>作業指示書 - ${info.siteName||"現場名未入力"}</title>
+<style>
+  @page { size: A3 landscape; margin: 10mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Hiragino Kaku Gothic Pro','Noto Sans JP',sans-serif; font-size: 10px; color: #111; }
+  h1 { font-size: 20px; text-align: center; margin-bottom: 6px; letter-spacing: 4px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; border-bottom: 2px solid #333; padding-bottom: 6px; }
+  .badge { font-size: 16px; font-weight: 900; border: 2px solid #333; padding: 2px 12px; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; }
+  th { background: #e8edf2; padding: 3px 6px; border: 1px solid #ccc; font-size: 9px; text-align: center; }
+  .section-title { font-size: 11px; font-weight: bold; background: #2a4a6b; color: white; padding: 3px 8px; margin: 8px 0 4px; border-radius: 2px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .info-table td { padding: 4px 8px; border: 1px solid #ccc; }
+  .info-table .lbl { background: #f0f4f8; font-weight: bold; width: 80px; }
+  .total-row td { font-weight: bold; font-size: 12px; background: #e8f0ff; }
+  .grid-wrap { display: flex; gap: 16px; align-items: flex-start; }
+  .grid-legend { font-size: 8px; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .legend-item { display: flex; align-items: center; gap: 2px; }
+  .legend-box { width: 10px; height: 10px; border-radius: 2px; }
+  .scale-note { font-size: 8px; color: #666; margin-top: 2px; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>作業指示書</h1>
+    <div style="font-size:9px;color:#666;">出力日時：${new Date().toLocaleString('ja-JP')}</div>
+  </div>
+  <div class="badge">${workType}</div>
+</div>
+
+<!-- 基本情報 -->
+<div class="section-title">📋 基本情報</div>
+<table class="info-table" style="margin-bottom:8px;">
+  <tr>
+    <td class="lbl">施工日</td><td>${info.date||"　"}</td>
+    <td class="lbl">元請名</td><td>${info.client||"　"}</td>
+    <td class="lbl">担当者</td><td>${info.manager||"　"}</td>
+    <td class="lbl">車両指定</td><td>${info.vehicle||"　"}</td>
+  </tr>
+  <tr>
+    <td class="lbl">作業時間</td><td>${info.timeStart||"　"}〜${info.timeEnd||"　"}</td>
+    <td class="lbl">現場名</td><td colspan="3">${info.siteName||"　"}</td>
+    <td class="lbl">荷取りS</td><td>${荷取り}</td>
+  </tr>
+  <tr>
+    <td class="lbl">現場住所</td><td colspan="5">${info.siteAddress||"　"}</td>
+    <td class="lbl">昇降階段</td><td>${昇降}</td>
+  </tr>
+  <tr>
+    <td class="lbl">工事内容</td><td colspan="3">${kojiContents.join("・")||"　"}</td>
+    <td class="lbl">足場仕様</td><td colspan="3">${scaffoldSpec.join("・")||"　"}</td>
+  </tr>
+  <tr>
+    <td class="lbl">安全対策</td><td colspan="3">${安全対策.join("・")||"　"}</td>
+    <td class="lbl">シート</td><td colspan="3">${シート.join("・")||"　"}</td>
+  </tr>
+  ${備考 ? `<tr><td class="lbl">備考</td><td colspan="7">${備考}</td></tr>` : ""}
+</table>
+
+<div class="two-col">
+  <!-- 左列：図面 -->
+  <div>
+    <div class="section-title">📐 平面図（1マス＝1,800mm）</div>
+    <div class="grid-wrap" style="flex-direction:column;">
+      <div style="position:relative;">
+        ${bSVG.replace('</svg>','')}
+        ${sSVG.replace(/^<svg[^>]*>/,'').replace('</svg>','')}
+        </svg>
+      </div>
+      <div class="scale-note">横 ${scaleM}m × 縦 ${scaleN}m　|　階数：${floors}階建て</div>
+      <div class="grid-legend">
+        ${Object.entries(BUILDING_PARTS).filter(([k])=>bGridRef.current.some(r=>r.includes(k))).map(([k,p])=>`<div class="legend-item"><div class="legend-box" style="background:${p.color};"></div><span>${p.label}</span></div>`).join("")}
+        ${Object.entries(SCAFFOLD_PARTS).filter(([k])=>sGridRef.current.some(r=>r.includes(k))).map(([k,p])=>`<div class="legend-item"><div class="legend-box" style="background:${p.color};"></div><span>${p.label}</span></div>`).join("")}
+      </div>
+    </div>
+  </div>
+
+  <!-- 右列：積算＋確認事項 -->
+  <div>
+    <div class="section-title">💰 部材積算</div>
+    <table style="margin-bottom:8px;">
+      <tr><th>部材名</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th></tr>
+      ${partRows}
+      <tr class="total-row">
+        <td colspan="4" style="padding:4px 6px;border:1px solid #ccc;text-align:right;">合計（材料費概算）</td>
+        <td style="padding:4px 6px;border:1px solid #ccc;text-align:right;">¥${totalCost.toLocaleString()}</td>
+      </tr>
+    </table>
+    <div style="font-size:8px;color:#666;margin-bottom:8px;">※労務費・運搬費・諸経費は含みません</div>
+
+    <div class="three-col">
+      <div>
+        <div class="section-title" style="font-size:9px;">現調時確認</div>
+        <table><tr><th>項目</th><th>済</th></tr>${surveyRows}</table>
+        ${damageMemo ? `<div style="margin-top:4px;font-size:8px;border:1px solid #ccc;padding:4px;"><b>破損メモ：</b>${damageMemo}</div>` : ""}
+      </div>
+      <div>
+        <div class="section-title" style="font-size:9px;">架け時確認</div>
+        <table><tr><th>項目</th><th>済</th></tr>${setupRows}</table>
+      </div>
+      <div>
+        <div class="section-title" style="font-size:9px;">払い時確認</div>
+        <table><tr><th>項目</th><th>済</th></tr>${payRows}</table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>window.onload=()=>{window.print();}</script>
+</body>
+</html>`;
+
+    const w = window.open("","_blank");
+    w.document.write(html);
+    w.document.close();
+  };
 
   return (
     <div style={{minHeight:"100vh",background:"#0f1923",fontFamily:"'Noto Sans JP','Hiragino Kaku Gothic Pro',sans-serif",color:"#e8edf2",display:"flex",flexDirection:"column"}}>
@@ -586,6 +769,44 @@ export default function App() {
             ※ 平面配置×階数で概算を自動計算しています。<br/>
             ※ 労務費・運搬費・諸経費は含みません。
           </div>
+        </div>
+      )}
+
+      {/* ===== PDF出力 ===== */}
+      {activeTab==="pdf"&&(
+        <div style={{flex:1,padding:20,display:"flex",flexDirection:"column",gap:16,overflowY:"auto"}}>
+          <div style={{background:"#1a2d42",borderRadius:12,padding:"16px",border:"1px solid #2a4a6b"}}>
+            <div style={{fontSize:11,color:"#4a8ab8",fontWeight:700,letterSpacing:2,marginBottom:12}}>🖨️ PDF出力内容</div>
+            {[
+              ["📋 基本情報",info.siteName?"入力済み":"未入力",!!info.siteName],
+              ["🔨 工事内容",kojiContents.length>0?kojiContents.join("・"):"未選択",kojiContents.length>0],
+              ["📐 建物図面",bGridRef.current.some(r=>r.some(c=>c))?"配置済み":"未配置",bGridRef.current.some(r=>r.some(c=>c))],
+              ["⊞ 足場図面",hasScaffold?"配置済み":"未配置",hasScaffold],
+              ["💰 積算",hasScaffold?`¥${totalCost.toLocaleString()}`:"足場未配置",hasScaffold],
+              ["✅ 確認事項",`${doneChecks}/${totalChecks}項目`,doneChecks>0],
+            ].map(([label,val,ok])=>(
+              <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #1e3048"}}>
+                <span style={{fontSize:12}}>{label}</span>
+                <span style={{fontSize:11,color:ok?"#2d9a6f":"#5a7a96",fontWeight:ok?700:400}}>{ok?"✓ ":""}{val}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{background:"#151f2b",borderRadius:10,padding:"12px 14px",border:"1px solid #1e3048",fontSize:11,color:"#5a7a96",lineHeight:1.8}}>
+            📄 A3横サイズでの印刷を推奨します。<br/>
+            ブラウザの印刷設定で「用紙サイズ：A3」「横向き」を選択してください。<br/>
+            スマホの場合は「PDFに保存」を選ぶとPDFファイルとして保存できます。
+          </div>
+
+          <button onClick={printPDF} style={{
+            padding:"16px",borderRadius:12,
+            background:"linear-gradient(135deg,#1a5fa8,#2a7fd4)",
+            border:"none",color:"#fff",fontSize:16,fontWeight:700,
+            cursor:"pointer",letterSpacing:2,
+            boxShadow:"0 4px 16px rgba(42,127,212,0.4)",
+          }}>
+            🖨️　作業指示書を印刷 / PDF保存
+          </button>
         </div>
       )}
 
