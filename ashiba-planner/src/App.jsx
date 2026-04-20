@@ -214,6 +214,15 @@ export default function App() {
   const [備考, setNote] = useState("");
   const [floors, setFloors] = useState(3);
 
+  // 単価state（初期値はSCAFFOLD_PARTSから）
+  const [prices, setPrices] = useState(() =>
+    Object.fromEntries(Object.entries(SCAFFOLD_PARTS).map(([k,v]) => [k, v.price]))
+  );
+  const updatePrice = (key, val) => {
+    const n = parseInt(val.replace(/[^0-9]/g,''), 10);
+    setPrices(p => ({...p, [key]: isNaN(n) ? 0 : n}));
+  };
+
   // 確認事項state
   const [surveyChecks, setSurvey] = useState([]);
   const [damageMemo, setDmg] = useState("");
@@ -316,7 +325,7 @@ export default function App() {
   sGrid.forEach(row=>row.forEach(c=>{if(c)sCounts[c]++;}));
   const adjCounts = {};
   Object.keys(SCAFFOLD_PARTS).forEach(k=>{adjCounts[k]=k==="jack"?sCounts[k]:sCounts[k]*floors;});
-  const totalCost = Object.entries(adjCounts).reduce((s,[k,n])=>s+n*SCAFFOLD_PARTS[k].price,0);
+  const totalCost = Object.entries(adjCounts).reduce((s,[k,n])=>s+n*(prices[k]||0),0);
   const hasScaffold = Object.values(sCounts).some(v=>v>0);
 
   const totalChecks = CHECK_DEFS.survey.items.length+CHECK_DEFS.setup.items.length+CHECK_DEFS.payment.items.length;
@@ -527,20 +536,39 @@ export default function App() {
             </div>
           )}
           <div style={card}>
-            <div style={{fontSize:11,color:"#4a8ab8",fontWeight:700,letterSpacing:2,marginBottom:10}}>📦 部材明細</div>
+            <div style={{fontSize:11,color:"#4a8ab8",fontWeight:700,letterSpacing:2,marginBottom:10}}>📦 部材明細・単価設定</div>
             {!hasScaffold&&<div style={{fontSize:13,color:"#5a7a96",textAlign:"center",padding:"16px 0"}}>足場タブで部材を配置してください</div>}
             {Object.entries(SCAFFOLD_PARTS).map(([key,part])=>{
-              const cnt=adjCounts[key]; if(cnt===0) return null;
+              const cnt=adjCounts[key];
+              const unitPrice=prices[key]||0;
+              const subtotal=cnt*unitPrice;
               return (
-                <div key={key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 0",borderBottom:"1px solid #1e3048"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <div style={{width:26,height:26,background:part.color,borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:900}}>{part.symbol}</div>
-                    <div>
-                      <div style={{fontSize:13,fontWeight:600}}>{part.label}</div>
-                      <div style={{fontSize:11,color:"#7a9db8"}}>{cnt}{part.unit} × ¥{part.price.toLocaleString()}</div>
+                <div key={key} style={{padding:"10px 0",borderBottom:"1px solid #1e3048"}}>
+                  {/* 部材名と小計 */}
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{width:24,height:24,background:part.color,borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:900,color:"#fff"}}>{part.symbol}</div>
+                      <div>
+                        <div style={{fontSize:13,fontWeight:600}}>{part.label}</div>
+                        <div style={{fontSize:10,color:"#5a7a96"}}>{cnt>0?`${cnt}${part.unit}`:"未配置"}</div>
+                      </div>
+                    </div>
+                    <div style={{fontSize:14,fontWeight:700,color:cnt>0?"#4aa8e8":"#3a5a6a"}}>
+                      {cnt>0?`¥${subtotal.toLocaleString()}`:"—"}
                     </div>
                   </div>
-                  <div style={{fontSize:15,fontWeight:700,color:"#4aa8e8"}}>¥{(cnt*part.price).toLocaleString()}</div>
+                  {/* 単価入力 */}
+                  <div style={{display:"flex",alignItems:"center",gap:8,background:"#0f1923",borderRadius:8,padding:"6px 10px",border:"1px solid #2a4a6b"}}>
+                    <span style={{fontSize:11,color:"#7a9db8",whiteSpace:"nowrap"}}>単価</span>
+                    <span style={{fontSize:11,color:"#7a9db8"}}>¥</span>
+                    <input
+                      type="number"
+                      value={unitPrice}
+                      onChange={e=>updatePrice(key,e.target.value)}
+                      style={{flex:1,background:"transparent",border:"none",color:"#e8edf2",fontSize:14,fontWeight:600,outline:"none",textAlign:"right"}}
+                    />
+                    <span style={{fontSize:11,color:"#7a9db8",whiteSpace:"nowrap"}}>/{part.unit}</span>
+                  </div>
                 </div>
               );
             })}
@@ -553,7 +581,7 @@ export default function App() {
             </div>
           )}
           <div style={{background:"#151f2b",borderRadius:10,padding:"10px 14px",border:"1px solid #1e3048",fontSize:10,color:"#5a7a96",lineHeight:1.9}}>
-            ※ 単価はサンプル値です。実際の単価に合わせて調整が必要です。<br/>
+            ※ 単価は上の入力欄で変更できます。<br/>
             ※ 1マス＝1,800mm×1,800mm（1スパン）で計算しています。<br/>
             ※ 平面配置×階数で概算を自動計算しています。<br/>
             ※ 労務費・運搬費・諸経費は含みません。
