@@ -1,17 +1,24 @@
-import { useState, useRef, useCallback, useReducer } from "react";
+import { useState, useRef, useCallback, useReducer, useEffect } from "react";
 
-const BASE_CELL = 36;
-const GRID_COLS = 20;
-const GRID_ROWS = 15;
-const MM_PER_CELL = 1800;
+// ===== 定数 =====
+const GRID_COLS = 250;  // 横250マス = 25,000mm
+const GRID_ROWS = 180;  // 縦180マス = 18,000mm
+const MM_PER_CELL = 100;
+const BASE_CELL = 8;    // 表示上の基本セルサイズ(px)
 const MIN_SCALE = 0.5;
-const MAX_SCALE = 3.0;
+const MAX_SCALE = 8.0;
+const INIT_SCALE = 1.5;
 
 const BUILDING_PARTS = {
-  wall:     { label: "外壁",       color: "#4a5568", symbol: "壁", border: "#718096" },
-  window:   { label: "窓",         color: "#2b6cb0", symbol: "窓", border: "#4299e1" },
-  entrance: { label: "出入口",     color: "#744210", symbol: "入", border: "#d69e2e" },
-  balcony:  { label: "バルコニー", color: "#276749", symbol: "BC", border: "#48bb78" },
+  wall:     { label: "外壁",       color: "#4a5568", symbol: "壁" },
+  window:   { label: "窓",         color: "#2b6cb0", symbol: "窓" },
+  entrance: { label: "出入口",     color: "#744210", symbol: "入" },
+  balcony:  { label: "バルコニー", color: "#276749", symbol: "BC" },
+  eave:     { label: "軒",         color: "#5a4a2a", symbol: "軒" },
+  carport:  { label: "カーポート", color: "#2a5a6a", symbol: "CP" },
+  takylon:  { label: "タキロン",   color: "#1a6a5a", symbol: "TK" },
+  plant:    { label: "植木",       color: "#2d6a2a", symbol: "植" },
+  other:    { label: "その他",     color: "#5a5a5a", symbol: "他" },
 };
 
 const SCAFFOLD_PARTS = {
@@ -24,186 +31,155 @@ const SCAFFOLD_PARTS = {
 };
 
 const CHECK_DEFS = {
-  survey: {
-    title: "現調時確認事項", color: "#2a7fd4",
-    items: ["カーポート・駐輪場屋根","割れ・ヒビ・傷等","電気器具等破損","玄関廻り破損個所","壁・サッシ廻り破損","軒点破損等","縦・横樋破損","庭・敷地内","外回り破損"],
-  },
-  setup: {
-    title: "架け時確認事項", color: "#2d9a6f",
-    items: ["現調時確認事項の確認","到着時敷地内確認","左記破損個所の確認","隣・棟・屋根・瓦の破損","素材の欠損等確認","庭・花壇の状況","照明器具・電気設備の状況","主任者看板シートの設置","作業終了後 目視"],
-  },
-  payment: {
-    title: "払い時確認事項", color: "#6b4c9a",
-    items: ["現調時確認事項の確認","到着時敷地内確認","左記破損個所の確認","軒・棟・屋根・瓦確認","素材の欠損等確認","庭・花壇の状況","壁・天井等の汚れ破損","作業終了後 目視","作業終了時後の清掃"],
-  },
+  survey:  { title: "現調時確認事項", color: "#2a7fd4", items: ["カーポート・駐輪場屋根","割れ・ヒビ・傷等","電気器具等破損","玄関廻り破損個所","壁・サッシ廻り破損","軒点破損等","縦・横樋破損","庭・敷地内","外回り破損"] },
+  setup:   { title: "架け時確認事項", color: "#2d9a6f", items: ["現調時確認事項の確認","到着時敷地内確認","左記破損個所の確認","隣・棟・屋根・瓦の破損","素材の欠損等確認","庭・花壇の状況","照明器具・電気設備の状況","主任者看板シートの設置","作業終了後 目視"] },
+  payment: { title: "払い時確認事項", color: "#6b4c9a", items: ["現調時確認事項の確認","到着時敷地内確認","左記破損個所の確認","軒・棟・屋根・瓦確認","素材の欠損等確認","庭・花壇の状況","壁・天井等の汚れ破損","作業終了後 目視","作業終了時後の清掃"] },
 };
 
 const mkGrid = () => Array(GRID_ROWS).fill(null).map(() => Array(GRID_COLS).fill(null));
 
-// ---- スタイル定数 ----
-const card = { background: "#1a2d42", borderRadius: 12, padding: "14px 16px", border: "1px solid #2a4a6b", marginBottom: 12 };
-const lbl  = { fontSize: 11, color: "#7a9db8", marginBottom: 4, display: "block" };
-const inp  = { width: "100%", background: "#0f1923", border: "1px solid #2a4a6b", borderRadius: 8, color: "#e8edf2", padding: "9px 12px", fontSize: 14, boxSizing: "border-box", outline: "none" };
-const r2   = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 };
+// ===== スタイル =====
+const card = { background:"#1a2d42", borderRadius:12, padding:"14px 16px", border:"1px solid #2a4a6b", marginBottom:12 };
+const lbl  = { fontSize:11, color:"#7a9db8", marginBottom:4, display:"block" };
+const inp  = { width:"100%", background:"#0f1923", border:"1px solid #2a4a6b", borderRadius:8, color:"#e8edf2", padding:"9px 12px", fontSize:14, boxSizing:"border-box", outline:"none" };
+const r2   = { display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 };
 
 function Tags({ label, opts, vals, onChange }) {
   return (
-    <div style={{ marginBottom: 12 }}>
-      {label && <span style={lbl}>{label}</span>}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {opts.map(o => {
-          const on = vals.includes(o);
-          return (
-            <button key={o} onClick={() => onChange(on ? vals.filter(v=>v!==o) : [...vals,o])} style={{
-              padding:"5px 11px", borderRadius:20, fontSize:12, cursor:"pointer",
-              background: on?"#2a7fd4":"#0f1923",
-              border: on?"1px solid #2a7fd4":"1px solid #2a4a6b",
-              color: on?"#fff":"#7a9db8",
-            }}>{o}</button>
-          );
-        })}
+    <div style={{marginBottom:12}}>
+      {label&&<span style={lbl}>{label}</span>}
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {opts.map(o=>{const on=vals.includes(o);return(
+          <button key={o} onClick={()=>onChange(on?vals.filter(v=>v!==o):[...vals,o])} style={{padding:"5px 11px",borderRadius:20,fontSize:12,cursor:"pointer",background:on?"#2a7fd4":"#0f1923",border:on?"1px solid #2a7fd4":"1px solid #2a4a6b",color:on?"#fff":"#7a9db8"}}>{o}</button>
+        );})}
       </div>
     </div>
   );
 }
-
 function Radio({ label, opts, val, onChange }) {
   return (
-    <div style={{ marginBottom: 12 }}>
-      {label && <span style={lbl}>{label}</span>}
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {opts.map(o => {
-          const on = val===o;
-          return (
-            <button key={o} onClick={()=>onChange(o)} style={{
-              padding:"5px 14px", borderRadius:20, fontSize:12, cursor:"pointer",
-              background: on?"#1a5fa8":"#0f1923",
-              border: on?"1px solid #2a7fd4":"1px solid #2a4a6b",
-              color: on?"#e8edf2":"#7a9db8", fontWeight: on?700:400,
-            }}>{o}</button>
-          );
-        })}
+    <div style={{marginBottom:12}}>
+      {label&&<span style={lbl}>{label}</span>}
+      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        {opts.map(o=>{const on=val===o;return(
+          <button key={o} onClick={()=>onChange(o)} style={{padding:"5px 14px",borderRadius:20,fontSize:12,cursor:"pointer",background:on?"#1a5fa8":"#0f1923",border:on?"1px solid #2a7fd4":"1px solid #2a4a6b",color:on?"#e8edf2":"#7a9db8",fontWeight:on?700:400}}>{o}</button>
+        );})}
       </div>
     </div>
   );
 }
-
 function Fld({ label, val, onChange, ph, type="text" }) {
   return (
-    <div style={{ marginBottom: 12 }}>
+    <div style={{marginBottom:12}}>
       <label style={lbl}>{label}</label>
       <input type={type} value={val} onChange={e=>onChange(e.target.value)} placeholder={ph} style={inp}/>
     </div>
   );
 }
-
-function CheckSection({ def, checks, onToggle, memo, onMemo }) {
-  const done = def.items.filter(i=>checks.includes(i)).length;
+function CheckSection({ def, checks, onToggle }) {
+  const done=def.items.filter(i=>checks.includes(i)).length;
   return (
-    <div style={{...card, borderColor: def.color+"66"}}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-        <div style={{ fontSize:12, fontWeight:700, color:def.color }}>{def.title}</div>
-        <div style={{ fontSize:11, padding:"2px 10px", borderRadius:20, background: done===def.items.length?def.color+"33":"#0f1923", border:`1px solid ${done===def.items.length?def.color:"#2a4a6b"}`, color: done===def.items.length?def.color:"#5a7a96" }}>
-          {done}/{def.items.length}
-        </div>
+    <div style={{...card,borderColor:def.color+"66"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div style={{fontSize:12,fontWeight:700,color:def.color}}>{def.title}</div>
+        <div style={{fontSize:11,padding:"2px 10px",borderRadius:20,background:done===def.items.length?def.color+"33":"#0f1923",border:`1px solid ${done===def.items.length?def.color:"#2a4a6b"}`,color:done===def.items.length?def.color:"#5a7a96"}}>{done}/{def.items.length}</div>
       </div>
-      {memo !== undefined ? (
-        <textarea value={memo} onChange={e=>onMemo(e.target.value)} placeholder="破損・注意個所の詳細を記入" rows={4}
-          style={{...inp, resize:"vertical", lineHeight:1.6, fontFamily:"inherit"}}/>
-      ) : (
-        def.items.map((item,idx) => {
-          const ck = checks.includes(item);
-          return (
-            <button key={item} onClick={()=>onToggle(item)} style={{
-              display:"flex", alignItems:"center", gap:12, padding:"11px 12px",
-              background: ck?def.color+"18":"transparent",
-              border:"none", borderBottom: idx<def.items.length-1?"1px solid #1e3048":"none",
-              cursor:"pointer", textAlign:"left", width:"100%",
-            }}>
-              <div style={{ width:22, height:22, borderRadius:6, flexShrink:0, background:ck?def.color:"#0f1923", border:`2px solid ${ck?def.color:"#2a4a6b"}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, color:"#fff" }}>
-                {ck?"✓":""}
-              </div>
-              <span style={{ fontSize:13, color:ck?"#e8edf2":"#7a9db8" }}>{item}</span>
-              {ck && <span style={{ marginLeft:"auto", fontSize:10, color:def.color }}>済</span>}
-            </button>
-          );
-        })
-      )}
+      {def.items.map((item,idx)=>{const ck=checks.includes(item);return(
+        <button key={item} onClick={()=>onToggle(item)} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 12px",background:ck?def.color+"18":"transparent",border:"none",borderBottom:idx<def.items.length-1?"1px solid #1e3048":"none",cursor:"pointer",textAlign:"left",width:"100%"}}>
+          <div style={{width:22,height:22,borderRadius:6,flexShrink:0,background:ck?def.color:"#0f1923",border:`2px solid ${ck?def.color:"#2a4a6b"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"#fff"}}>{ck?"✓":""}</div>
+          <span style={{fontSize:13,color:ck?"#e8edf2":"#7a9db8"}}>{item}</span>
+          {ck&&<span style={{marginLeft:"auto",fontSize:10,color:def.color}}>済</span>}
+        </button>
+      );})}
     </div>
   );
 }
 
-// ---- グリッド描画コンポーネント（分離して余計な再レンダー排除）----
-function GridCanvas({ bGrid, sGrid, cellSize, onPointerDown, onPointerMove, onPointerUp }) {
-  return (
-    <div
-      onMouseDown={onPointerDown} onMouseMove={onPointerMove}
-      onMouseUp={onPointerUp} onMouseLeave={onPointerUp}
-      onTouchStart={onPointerDown} onTouchMove={onPointerMove} onTouchEnd={onPointerUp}
-      style={{
-        display:"grid",
-        gridTemplateColumns:`repeat(${GRID_COLS},${cellSize}px)`,
-        gridTemplateRows:`repeat(${GRID_ROWS},${cellSize}px)`,
-        border:"2px solid #2a4a6b", borderRadius:6, overflow:"hidden",
-        userSelect:"none", touchAction:"none",
-        boxShadow:"0 4px 20px rgba(0,0,0,0.5)", cursor:"crosshair",
-      }}
-    >
-      {Array.from({length:GRID_ROWS},(_,ri) =>
-        Array.from({length:GRID_COLS},(_,ci) => {
-          const bCell = bGrid[ri][ci];
-          const sCell = sGrid[ri][ci];
-          const bP = bCell ? BUILDING_PARTS[bCell] : null;
-          const sP = sCell ? SCAFFOLD_PARTS[sCell] : null;
-          let bg = (ri+ci)%2===0 ? "#141e2a":"#111827";
-          if (bP) bg = bP.color;
-          else if (sP) bg = sP.color;
-          const fs = Math.max(7, Math.min(12, cellSize*0.28));
-          return (
-            <div key={`${ri}-${ci}`} style={{
-              width:cellSize, height:cellSize, background:bg,
-              borderRight: ci%5===0?"1px solid #2a5a8b":"1px solid #1a2a3a",
-              borderBottom: ri%5===0?"1px solid #2a5a8b":"1px solid #1a2a3a",
-              display:"flex", alignItems:"center", justifyContent:"center",
-              position:"relative", flexShrink:0,
-            }}>
-              {bP && <span style={{fontSize:fs,fontWeight:900,color:"#fff",textShadow:"0 1px 2px rgba(0,0,0,0.8)"}}>{bP.symbol}</span>}
-              {!bP && sP && <span style={{fontSize:fs,fontWeight:900,color:"#fff"}}>{sP.symbol}</span>}
-              {bP && sP && <span style={{position:"absolute",bottom:1,right:2,fontSize:Math.max(6,fs*0.7),color:"rgba(255,255,255,0.75)"}}>{sP.symbol}</span>}
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
+// ===== 寸法ラベルを計算（連続ブロックの検出）=====
+// 水平・垂直方向の連続ブロックを検出して中央セルと長さを返す
+function calcDimensions(grid) {
+  const dims = []; // {row, col, dir:"h"|"v", cells, labelMm, editKey}
+  const ROWS = grid.length, COLS = grid[0]?.length || 0;
+
+  // 水平方向
+  for (let r = 0; r < ROWS; r++) {
+    let c = 0;
+    while (c < COLS) {
+      if (!grid[r][c]) { c++; continue; }
+      const part = grid[r][c];
+      let end = c;
+      while (end + 1 < COLS && grid[r][end+1] === part) end++;
+      const len = end - c + 1;
+      if (len >= 2) {
+        const mid = Math.floor((c + end) / 2);
+        dims.push({ row: r, col: mid, dir: "h", cells: len, labelMm: len * MM_PER_CELL, key: `h_${r}_${c}` });
+      }
+      c = end + 1;
+    }
+  }
+  // 垂直方向
+  for (let c = 0; c < COLS; c++) {
+    let r = 0;
+    while (r < ROWS) {
+      if (!grid[r][c]) { r++; continue; }
+      const part = grid[r][c];
+      let end = r;
+      while (end + 1 < ROWS && grid[end+1][c] === part) end++;
+      const len = end - r + 1;
+      if (len >= 2) {
+        const mid = Math.floor((r + end) / 2);
+        dims.push({ row: mid, col: c, dir: "v", cells: len, labelMm: len * MM_PER_CELL, key: `v_${r}_${c}` });
+      }
+      r = end + 1;
+    }
+  }
+  return dims;
 }
 
-// ========== メインコンポーネント ==========
+// ===== メインコンポーネント =====
 export default function App() {
-  // 再描画トリガー専用
-  const [tick, redraw] = useReducer(n => n+1, 0);
+  const [tick, redraw] = useReducer(n=>n+1, 0);
 
-  // 全ての描画状態はRefで管理（stale closure完全回避）
+  // グリッドRef（建物・足場）
   const bGridRef = useRef(mkGrid());
   const sGridRef = useRef(mkGrid());
-  const layerRef = useRef("building");   // "building" | "scaffold"
+  const layerRef = useRef("building");
   const bPartRef = useRef("wall");
   const sPartRef = useRef("frame");
-  const scaleRef = useRef(1.0);
+  const scaleRef = useRef(INIT_SCALE);
   const isDrawingRef = useRef(false);
-  const eraseModeRef = useRef(false); // 消しゴムボタンON/OFF
-  const pinchRef = useRef({active:false, dist:0, startScale:1});
-  const [eraseOn, setEraseOn] = useState(false);
+  const eraseModeRef = useRef(false);
+  const pinchRef = useRef({active:false,dist:0,startScale:1});
+  // パン（スクロール）
+  const panRef = useRef({active:false,startX:0,startY:0,scrollX:0,scrollY:0});
+  const touchStartRef = useRef(null); // {x, y, time} タッチ開始位置
+  const hasMoved = useRef(false);     // スクロール判定済みフラグ
+  const MOVE_THRESHOLD = 8;           // px: これ以上動いたらスクロール扱い
+  const gridContainerRef = useRef(null);
 
-  // UI用state（描画には使わない）
-  const [activeTab, setActiveTab] = useState("info");
-  const [scale, setScale] = useState(1.0);
+  // テキストボックス
+  const [textBoxes, setTextBoxes] = useState([]);
+  const [addingText, setAddingText] = useState(false);
+  const [editingText, setEditingText] = useState(null); // {id, value}
+
+  // 寸法ラベル上書き
+  const [dimOverrides, setDimOverrides] = useState({}); // key -> mm値
+  const [editingDim, setEditingDim] = useState(null); // {key, value}
+
+  // UI state
+  const [activeTab, setActiveTab] = useState("draw");
+  const [scale, setScale] = useState(INIT_SCALE);
   const [bPartUI, setBPartUI] = useState("wall");
   const [sPartUI, setSPartUI] = useState("frame");
+  const [eraseOn, setEraseOn] = useState(false);
+  const [drawMode, setDrawMode] = useState("draw"); // "draw"|"text"
+  const [interactMode, setInteractMode] = useState("scroll"); // "draw"|"scroll"
+  const interactModeRef = useRef("scroll");
+  const setInteractModeSync = v => { interactModeRef.current=v; setInteractMode(v); };
 
-  // 現場情報state
+  // 現場情報
   const [info, setInfo] = useState({date:"",timeStart:"",timeEnd:"",client:"",siteName:"",siteAddress:"",manager:"",vehicle:""});
-  const upd = k => v => setInfo(p=>({...p,[k]:v}));
+  const upd = k=>v=>setInfo(p=>({...p,[k]:v}));
   const [workType, setWorkType] = useState("組立");
   const [kojiContents, setKoji] = useState([]);
   const [scaffoldSpec, setSpec] = useState([]);
@@ -213,350 +189,416 @@ export default function App() {
   const [シート, setSheet] = useState([]);
   const [備考, setNote] = useState("");
   const [floors, setFloors] = useState(3);
+  const [prices, setPrices] = useState(()=>Object.fromEntries(Object.entries(SCAFFOLD_PARTS).map(([k,v])=>[k,v.price])));
+  const updatePrice=(key,val)=>{const n=parseInt(val.replace(/[^0-9]/g,''),10);setPrices(p=>({...p,[key]:isNaN(n)?0:n}));};
 
-  // 単価state（初期値はSCAFFOLD_PARTSから）
-  const [prices, setPrices] = useState(() =>
-    Object.fromEntries(Object.entries(SCAFFOLD_PARTS).map(([k,v]) => [k, v.price]))
-  );
-  const updatePrice = (key, val) => {
-    const n = parseInt(val.replace(/[^0-9]/g,''), 10);
-    setPrices(p => ({...p, [key]: isNaN(n) ? 0 : n}));
-  };
-
-  // 確認事項state
+  // 確認事項
   const [surveyChecks, setSurvey] = useState([]);
   const [damageMemo, setDmg] = useState("");
   const [setupChecks, setSetup] = useState([]);
   const [payChecks, setPay] = useState([]);
-  const toggle = setter => item => setter(p => p.includes(item)?p.filter(v=>v!==item):[...p,item]);
+  const toggle = setter=>item=>setter(p=>p.includes(item)?p.filter(v=>v!==item):[...p,item]);
 
-  const cellSize = scale * BASE_CELL;
-  const isDrawTab = activeTab==="building" || activeTab==="scaffold";
+  const cellSize = BASE_CELL * scale;
+  const isDrawTab = activeTab === "draw";
 
-  // タブ切り替え
-  const switchTab = (key) => {
-    if (key==="building") layerRef.current="building";
-    if (key==="scaffold") layerRef.current="scaffold";
-    setActiveTab(key);
+  // 全体サイズ（使われているマス範囲）
+  const usedBounds = (() => {
+    let minR=GRID_ROWS,maxR=0,minC=GRID_COLS,maxC=0,found=false;
+    [bGridRef.current, sGridRef.current].forEach(grid=>{
+      grid.forEach((row,r)=>row.forEach((c2,c)=>{
+        if(c2){found=true;minR=Math.min(minR,r);maxR=Math.max(maxR,r);minC=Math.min(minC,c);maxC=Math.max(maxC,c);}
+      }));
+    });
+    return found?{w:(maxC-minC+1)*MM_PER_CELL,h:(maxR-minR+1)*MM_PER_CELL}:null;
+  })();
+
+  const setScaleSync=val=>{scaleRef.current=val;setScale(val);};
+
+  const selectPart=key=>{
+    if(layerRef.current==="building"){bPartRef.current=key;setBPartUI(key);}
+    else{sPartRef.current=key;setSPartUI(key);}
+    eraseModeRef.current=false;setEraseOn(false);
   };
 
-  // 部材選択
-  const selectPart = (key) => {
-    if (layerRef.current==="building") { bPartRef.current=key; setBPartUI(key); }
-    else { sPartRef.current=key; setSPartUI(key); }
-    // 部材選択したら消しゴムOFF
-    eraseModeRef.current = false;
-    setEraseOn(false);
+  const getCellFromEvent=(e,el)=>{
+    const rect=el.getBoundingClientRect();
+    const cx=e.touches?e.touches[0].clientX:e.clientX;
+    const cy=e.touches?e.touches[0].clientY:e.clientY;
+    return{row:Math.floor((cy-rect.top)/(scaleRef.current*BASE_CELL)),col:Math.floor((cx-rect.left)/(scaleRef.current*BASE_CELL))};
   };
 
-  // スケール変更
-  const changeScale = (val) => { scaleRef.current=val; setScale(val); };
+  const getTouchDist=t=>{const dx=t[0].clientX-t[1].clientX,dy=t[0].clientY-t[1].clientY;return Math.sqrt(dx*dx+dy*dy);};
 
-  // セル座標計算
-  const getCell = (e, el) => {
-    const rect = el.getBoundingClientRect();
-    const cx = e.touches ? e.touches[0].clientX : e.clientX;
-    const cy = e.touches ? e.touches[0].clientY : e.clientY;
-    return {
-      row: Math.floor((cy - rect.top)  / (scaleRef.current * BASE_CELL)),
-      col: Math.floor((cx - rect.left) / (scaleRef.current * BASE_CELL)),
-    };
-  };
-
-  const getTouchDist = t => {
-    const dx = t[0].clientX-t[1].clientX, dy = t[0].clientY-t[1].clientY;
-    return Math.sqrt(dx*dx+dy*dy);
-  };
-
-  // セルを塗る
-  const paint = (row, col) => {
-    if (row<0||row>=GRID_ROWS||col<0||col>=GRID_COLS) return;
-    const isB = layerRef.current==="building";
-    const part = isB ? bPartRef.current : sPartRef.current;
-    const grid = isB ? bGridRef.current : sGridRef.current;
-    grid[row][col] = eraseModeRef.current ? null : part;
+  const paint=(row,col)=>{
+    if(row<0||row>=GRID_ROWS||col<0||col>=GRID_COLS)return;
+    const isB=layerRef.current==="building";
+    const part=isB?bPartRef.current:sPartRef.current;
+    const grid=isB?bGridRef.current:sGridRef.current;
+    grid[row][col]=eraseModeRef.current?null:part;
     redraw();
   };
 
-  const onDown = useCallback((e) => {
-    if (e.touches && e.touches.length===2) {
-      e.preventDefault();
-      pinchRef.current = {active:true, dist:getTouchDist(e.touches), startScale:scaleRef.current};
-      isDrawingRef.current = false;
+  const onDown=useCallback(e=>{
+    if(interactModeRef.current==="scroll"){
+      // 移動モードのみピンチ有効
+      if(e.touches&&e.touches.length===2){
+        e.preventDefault();
+        pinchRef.current={active:true,dist:getTouchDist(e.touches),startScale:scaleRef.current};
+      }
       return;
     }
-    e.preventDefault();
-    const {row,col} = getCell(e, e.currentTarget);
-    if (row<0||row>=GRID_ROWS||col<0||col>=GRID_COLS) return;
-    isDrawingRef.current = true;
-    paint(row, col);
-  }, []);
-
-  const onMove = useCallback((e) => {
-    // ピンチ継続
-    if (e.touches && e.touches.length===2 && pinchRef.current.active) {
+    if(drawMode==="text")return;
+    // 描画モードでは2本指も描画扱い（ピンチしない）
+    if(e.touches&&e.touches.length===2){
       e.preventDefault();
-      const ratio = getTouchDist(e.touches) / pinchRef.current.dist;
-      const next = Math.round(Math.min(MAX_SCALE, Math.max(MIN_SCALE, pinchRef.current.startScale*ratio))*20)/20;
-      changeScale(next);
+      return; // 描画モードでは2本指無視
+    }
+    e.preventDefault(); // 描画モードはスクロール完全抑制
+    const cx=e.touches?e.touches[0].clientX:e.clientX;
+    const cy=e.touches?e.touches[0].clientY:e.clientY;
+    touchStartRef.current={x:cx,y:cy,el:e.currentTarget};
+    hasMoved.current=false;
+    isDrawingRef.current=true;
+    // Down時点で即配置
+    const{row,col}=getCellFromEvent(e,e.currentTarget);
+    if(row>=0&&row<GRID_ROWS&&col>=0&&col<GRID_COLS) paint(row,col);
+  },[drawMode]);
+
+  const onMove=useCallback(e=>{
+    if(e.touches&&e.touches.length===2&&pinchRef.current.active&&interactModeRef.current==="scroll"){
+      e.preventDefault();
+      const ratio=getTouchDist(e.touches)/pinchRef.current.dist;
+      setScaleSync(Math.round(Math.min(MAX_SCALE,Math.max(MIN_SCALE,pinchRef.current.startScale*ratio))*20)/20);
       return;
     }
-    if (!isDrawingRef.current) return;
-    e.preventDefault();
-    const {row,col} = getCell(e, e.currentTarget);
-    paint(row, col);
-  }, []);
+    if(!isDrawingRef.current)return;
+    e.preventDefault(); // 描画モード中はスクロール抑制
+    const{row,col}=getCellFromEvent(e,touchStartRef.current?.el||e.currentTarget);
+    paint(row,col);
+  },[]);
 
-  const onUp = useCallback(() => {
-    isDrawingRef.current = false;
-    pinchRef.current.active = false;
-  }, []);
+  const onUp=useCallback(e=>{
+    pinchRef.current.active=false;
+    // Up時の追加処理（念のため最終セルを配置）
+    if(isDrawingRef.current&&touchStartRef.current){
+      const cx=e.changedTouches?e.changedTouches[0].clientX:e.clientX;
+      const cy=e.changedTouches?e.changedTouches[0].clientY:e.clientY;
+      const dx=Math.abs(cx-touchStartRef.current.x);
+      const dy=Math.abs(cy-touchStartRef.current.y);
+      if(Math.sqrt(dx*dx+dy*dy)<=MOVE_THRESHOLD){
+        const{row,col}=getCellFromEvent(e.changedTouches?{touches:e.changedTouches}:e, touchStartRef.current.el);
+        paint(row,col);
+      }
+    }
+    isDrawingRef.current=false;
+    touchStartRef.current=null;
+    hasMoved.current=false;
+  },[]);
 
-  const clearGrid = () => {
-    if (layerRef.current==="building") bGridRef.current = mkGrid();
-    else sGridRef.current = mkGrid();
+  // グリッドタップでテキスト追加
+  const onGridClick=useCallback(e=>{
+    if(drawMode!=="text")return;
+    const{row,col}=getCellFromEvent(e,e.currentTarget);
+    const id=Date.now();
+    setTextBoxes(prev=>[...prev,{id,row,col,text:"テキスト"}]);
+    setEditingText({id,value:"テキスト"});
+    setAddingText(false);
+  },[drawMode]);
+
+  const clearGrid=()=>{
+    if(layerRef.current==="building")bGridRef.current=mkGrid();
+    else sGridRef.current=mkGrid();
     redraw();
   };
 
-  // 積算（表示用にgridをコピー読み）
-  const sGrid = sGridRef.current;
-  const sCounts = {};
-  Object.keys(SCAFFOLD_PARTS).forEach(k=>{sCounts[k]=0;});
+  // 積算
+  const sGrid=sGridRef.current;
+  const sCounts={};Object.keys(SCAFFOLD_PARTS).forEach(k=>{sCounts[k]=0;});
   sGrid.forEach(row=>row.forEach(c=>{if(c)sCounts[c]++;}));
-  const adjCounts = {};
-  Object.keys(SCAFFOLD_PARTS).forEach(k=>{adjCounts[k]=k==="jack"?sCounts[k]:sCounts[k]*floors;});
-  const totalCost = Object.entries(adjCounts).reduce((s,[k,n])=>s+n*(prices[k]||0),0);
-  const hasScaffold = Object.values(sCounts).some(v=>v>0);
+  const adjCounts={};Object.keys(SCAFFOLD_PARTS).forEach(k=>{adjCounts[k]=k==="jack"?sCounts[k]:sCounts[k]*floors;});
+  const totalCost=Object.entries(adjCounts).reduce((s,[k,n])=>s+n*(prices[k]||0),0);
+  const hasScaffold=Object.values(sCounts).some(v=>v>0);
+  const totalChecks=CHECK_DEFS.survey.items.length+CHECK_DEFS.setup.items.length+CHECK_DEFS.payment.items.length;
+  const doneChecks=surveyChecks.length+setupChecks.length+payChecks.length;
 
-  const totalChecks = CHECK_DEFS.survey.items.length+CHECK_DEFS.setup.items.length+CHECK_DEFS.payment.items.length;
-  const doneChecks = surveyChecks.length+setupChecks.length+payChecks.length;
+  const currentPartKey=layerRef.current==="building"?bPartUI:sPartUI;
+  const currentParts=layerRef.current==="building"?BUILDING_PARTS:SCAFFOLD_PARTS;
 
-  const currentPartKey = activeTab==="building" ? bPartUI : sPartUI;
-  const currentParts = activeTab==="building" ? BUILDING_PARTS : SCAFFOLD_PARTS;
+  // 寸法ラベル（建物グリッドのみ表示）
+  const dims = calcDimensions(bGridRef.current);
 
-  const TABS = [
-    {key:"info",    label:"📋 現場情報"},
-    {key:"check",   label:"✅ 確認事項"},
-    {key:"building",label:"🏠 建物"},
-    {key:"scaffold",label:"⊞ 足場"},
-    {key:"estimate",label:"💰 積算"},
-    {key:"pdf",     label:"🖨️ PDF出力"},
+  // PDF出力（図面のみA4）
+  const printPDF=()=>{
+    const cellPx=4;
+    const W=GRID_COLS*cellPx, H=GRID_ROWS*cellPx;
+    let bCells="",sCells="";
+    bGridRef.current.forEach((row,ri)=>row.forEach((cell,ci)=>{
+      if(!cell)return;
+      const p=BUILDING_PARTS[cell];if(!p)return;
+      const x=ci*cellPx,y=ri*cellPx;
+      bCells+=`<rect x="${x}" y="${y}" width="${cellPx}" height="${cellPx}" fill="${p.color}" opacity="0.9"/>`;
+    }));
+    sGridRef.current.forEach((row,ri)=>row.forEach((cell,ci)=>{
+      if(!cell)return;
+      const p=SCAFFOLD_PARTS[cell];if(!p)return;
+      const x=ci*cellPx,y=ri*cellPx;
+      sCells+=`<rect x="${x}" y="${y}" width="${cellPx}" height="${cellPx}" fill="${p.color}" opacity="0.7"/>`;
+    }));
+    // テキストボックス
+    let textSVG="";
+    textBoxes.forEach(tb=>{
+      const x=tb.col*cellPx, y=tb.row*cellPx;
+      textSVG+=`<text x="${x}" y="${y+cellPx}" font-size="6" fill="#333" font-family="sans-serif">${tb.text}</text>`;
+    });
+    // 5マスごとグリッド線
+    let lines="";
+    for(let c=0;c<=GRID_COLS;c+=5){lines+=`<line x1="${c*cellPx}" y1="0" x2="${c*cellPx}" y2="${H}" stroke="#ccc" stroke-width="0.3"/>`;}
+    for(let r=0;r<=GRID_ROWS;r+=5){lines+=`<line x1="0" y1="${r*cellPx}" x2="${W}" y2="${r*cellPx}" stroke="#ccc" stroke-width="0.3"/>`;}
+    // ルーラー（mm）
+    let rulerH="",rulerV="";
+    for(let c=0;c<=GRID_COLS;c+=10){
+      const mm=(c*MM_PER_CELL/1000).toFixed(1);
+      rulerH+=`<text x="${c*cellPx}" y="8" font-size="5" fill="#666" font-family="sans-serif">${mm}m</text>`;
+    }
+    for(let r=0;r<=GRID_ROWS;r+=10){
+      const mm=(r*MM_PER_CELL/1000).toFixed(1);
+      rulerV+=`<text x="0" y="${r*cellPx+5}" font-size="5" fill="#666" font-family="sans-serif">${mm}</text>`;
+    }
+    const html=`<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"/>
+<title>平面図 - ${info.siteName||"現場名未入力"}</title>
+<style>
+  @page{size:A4 portrait;margin:8mm;}
+  body{margin:0;font-family:'Hiragino Kaku Gothic Pro',sans-serif;}
+  h2{font-size:14px;margin:0 0 4px;text-align:center;}
+  .meta{font-size:9px;color:#666;text-align:center;margin-bottom:6px;}
+  svg{display:block;width:100%;height:auto;}
+  .legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;font-size:8px;}
+  .li{display:flex;align-items:center;gap:3px;}
+  .lb{width:10px;height:10px;border-radius:2px;}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+</style></head><body>
+<h2>平面図　${info.siteName||""}</h2>
+<div class="meta">${info.date||""}　${info.siteAddress||""}　出力：${new Date().toLocaleString('ja-JP')}</div>
+<svg viewBox="0 0 ${W+20} ${H+20}" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(20,12)">${lines}${bCells}${sCells}${textSVG}</g>
+  <g transform="translate(20,0)">${rulerH}</g>
+  <g transform="translate(0,12)">${rulerV}</g>
+  <rect x="20" y="12" width="${W}" height="${H}" fill="none" stroke="#333" stroke-width="0.8"/>
+</svg>
+<div class="legend">
+  ${Object.entries(BUILDING_PARTS).filter(([k])=>bGridRef.current.some(r=>r.includes(k))).map(([k,p])=>`<div class="li"><div class="lb" style="background:${p.color}"></div><span>${p.label}</span></div>`).join("")}
+  ${Object.entries(SCAFFOLD_PARTS).filter(([k])=>sGridRef.current.some(r=>r.includes(k))).map(([k,p])=>`<div class="li"><div class="lb" style="background:${p.color}"></div><span>${p.label}</span></div>`).join("")}
+  <div style="margin-left:auto;font-size:9px;">1マス＝100mm　|　全体：${GRID_COLS*MM_PER_CELL/1000}m×${GRID_ROWS*MM_PER_CELL/1000}m</div>
+</div>
+<script>window.onload=()=>{window.print();}</script>
+</body></html>`;
+    const w=window.open("","_blank");w.document.write(html);w.document.close();
+  };
+
+  const TABS=[
+    {key:"draw",     label:"📐 図面"},
+    {key:"info",     label:"📋 現場"},
+    {key:"check",    label:"✅ 確認"},
+    {key:"estimate", label:"💰 積算"},
+    {key:"pdf",      label:"🖨️ PDF"},
   ];
 
-  // グリッドをSVG文字列に変換（PDF印刷用）
-  const gridToSVG = (grid, parts, cellPx) => {
-    const W = GRID_COLS * cellPx;
-    const H = GRID_ROWS * cellPx;
-    let cells = "";
-    grid.forEach((row, ri) => row.forEach((cell, ci) => {
-      if (!cell) return;
-      const p = parts[cell];
-      if (!p) return;
-      const x = ci * cellPx, y = ri * cellPx;
-      cells += `<rect x="${x}" y="${y}" width="${cellPx}" height="${cellPx}" fill="${p.color}" opacity="0.85"/>`;
-      cells += `<text x="${x+cellPx/2}" y="${y+cellPx/2+4}" text-anchor="middle" font-size="${cellPx*0.4}" font-weight="bold" fill="white">${p.symbol}</text>`;
-    }));
-    // グリッド線
-    let lines = "";
-    for (let c=0;c<=GRID_COLS;c++) {
-      const x = c*cellPx;
-      const sw = c%5===0?"0.6":"0.3";
-      lines += `<line x1="${x}" y1="0" x2="${x}" y2="${H}" stroke="#888" stroke-width="${sw}"/>`;
-    }
-    for (let r=0;r<=GRID_ROWS;r++) {
-      const y = r*cellPx;
-      const sw = r%5===0?"0.6":"0.3";
-      lines += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="#888" stroke-width="${sw}"/>`;
-    }
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" style="border:1px solid #333">${lines}${cells}</svg>`;
-  };
-
-  // PDF印刷用HTML生成＆新規ウィンドウで印刷
-  const printPDF = () => {
-    const cellPx = 18; // 印刷用セルサイズ
-    const bSVG = gridToSVG(bGridRef.current, BUILDING_PARTS, cellPx);
-    const sSVG = gridToSVG(sGridRef.current, SCAFFOLD_PARTS, cellPx);
-    const scaleM = (GRID_COLS * MM_PER_CELL / 1000).toFixed(1);
-    const scaleN = (GRID_ROWS * MM_PER_CELL / 1000).toFixed(1);
-
-    const partRows = Object.entries(SCAFFOLD_PARTS).map(([key,part]) => {
-      const cnt = adjCounts[key];
-      const unitPrice = prices[key]||0;
-      return `<tr>
-        <td style="padding:3px 6px;border:1px solid #ccc;">${part.label}</td>
-        <td style="padding:3px 6px;border:1px solid #ccc;text-align:center;">${cnt}</td>
-        <td style="padding:3px 6px;border:1px solid #ccc;text-align:center;">${part.unit}</td>
-        <td style="padding:3px 6px;border:1px solid #ccc;text-align:right;">¥${unitPrice.toLocaleString()}</td>
-        <td style="padding:3px 6px;border:1px solid #ccc;text-align:right;font-weight:bold;">¥${(cnt*unitPrice).toLocaleString()}</td>
-      </tr>`;
-    }).join("");
-
-    const surveyRows = CHECK_DEFS.survey.items.map(item =>
-      `<tr><td style="padding:2px 6px;border:1px solid #ccc;">${item}</td><td style="padding:2px 6px;border:1px solid #ccc;text-align:center;">${surveyChecks.includes(item)?"✓":""}</td></tr>`
-    ).join("");
-    const setupRows = CHECK_DEFS.setup.items.map(item =>
-      `<tr><td style="padding:2px 6px;border:1px solid #ccc;">${item}</td><td style="padding:2px 6px;border:1px solid #ccc;text-align:center;">${setupChecks.includes(item)?"✓":""}</td></tr>`
-    ).join("");
-    const payRows = CHECK_DEFS.payment.items.map(item =>
-      `<tr><td style="padding:2px 6px;border:1px solid #ccc;">${item}</td><td style="padding:2px 6px;border:1px solid #ccc;text-align:center;">${payChecks.includes(item)?"✓":""}</td></tr>`
-    ).join("");
-
-    const html = `<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="utf-8"/>
-<title>作業指示書 - ${info.siteName||"現場名未入力"}</title>
-<style>
-  @page { size: A3 landscape; margin: 10mm; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Hiragino Kaku Gothic Pro','Noto Sans JP',sans-serif; font-size: 10px; color: #111; }
-  h1 { font-size: 20px; text-align: center; margin-bottom: 6px; letter-spacing: 4px; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; border-bottom: 2px solid #333; padding-bottom: 6px; }
-  .badge { font-size: 16px; font-weight: 900; border: 2px solid #333; padding: 2px 12px; border-radius: 4px; }
-  table { border-collapse: collapse; width: 100%; }
-  th { background: #e8edf2; padding: 3px 6px; border: 1px solid #ccc; font-size: 9px; text-align: center; }
-  .section-title { font-size: 11px; font-weight: bold; background: #2a4a6b; color: white; padding: 3px 8px; margin: 8px 0 4px; border-radius: 2px; }
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-  .info-table td { padding: 4px 8px; border: 1px solid #ccc; }
-  .info-table .lbl { background: #f0f4f8; font-weight: bold; width: 80px; }
-  .total-row td { font-weight: bold; font-size: 12px; background: #e8f0ff; }
-  .grid-wrap { display: flex; gap: 16px; align-items: flex-start; }
-  .grid-legend { font-size: 8px; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
-  .legend-item { display: flex; align-items: center; gap: 2px; }
-  .legend-box { width: 10px; height: 10px; border-radius: 2px; }
-  .scale-note { font-size: 8px; color: #666; margin-top: 2px; }
-  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-</style>
-</head>
-<body>
-<div class="header">
-  <div>
-    <h1>作業指示書</h1>
-    <div style="font-size:9px;color:#666;">出力日時：${new Date().toLocaleString('ja-JP')}</div>
-  </div>
-  <div class="badge">${workType}</div>
-</div>
-
-<!-- 基本情報 -->
-<div class="section-title">📋 基本情報</div>
-<table class="info-table" style="margin-bottom:8px;">
-  <tr>
-    <td class="lbl">施工日</td><td>${info.date||"　"}</td>
-    <td class="lbl">元請名</td><td>${info.client||"　"}</td>
-    <td class="lbl">担当者</td><td>${info.manager||"　"}</td>
-    <td class="lbl">車両指定</td><td>${info.vehicle||"　"}</td>
-  </tr>
-  <tr>
-    <td class="lbl">作業時間</td><td>${info.timeStart||"　"}〜${info.timeEnd||"　"}</td>
-    <td class="lbl">現場名</td><td colspan="3">${info.siteName||"　"}</td>
-    <td class="lbl">荷取りS</td><td>${荷取り}</td>
-  </tr>
-  <tr>
-    <td class="lbl">現場住所</td><td colspan="5">${info.siteAddress||"　"}</td>
-    <td class="lbl">昇降階段</td><td>${昇降}</td>
-  </tr>
-  <tr>
-    <td class="lbl">工事内容</td><td colspan="3">${kojiContents.join("・")||"　"}</td>
-    <td class="lbl">足場仕様</td><td colspan="3">${scaffoldSpec.join("・")||"　"}</td>
-  </tr>
-  <tr>
-    <td class="lbl">安全対策</td><td colspan="3">${安全対策.join("・")||"　"}</td>
-    <td class="lbl">シート</td><td colspan="3">${シート.join("・")||"　"}</td>
-  </tr>
-  ${備考 ? `<tr><td class="lbl">備考</td><td colspan="7">${備考}</td></tr>` : ""}
-</table>
-
-<div class="two-col">
-  <!-- 左列：図面 -->
-  <div>
-    <div class="section-title">📐 平面図（1マス＝1,800mm）</div>
-    <div class="grid-wrap" style="flex-direction:column;">
-      <div style="position:relative;">
-        ${bSVG.replace('</svg>','')}
-        ${sSVG.replace(/^<svg[^>]*>/,'').replace('</svg>','')}
-        </svg>
-      </div>
-      <div class="scale-note">横 ${scaleM}m × 縦 ${scaleN}m　|　階数：${floors}階建て</div>
-      <div class="grid-legend">
-        ${Object.entries(BUILDING_PARTS).filter(([k])=>bGridRef.current.some(r=>r.includes(k))).map(([k,p])=>`<div class="legend-item"><div class="legend-box" style="background:${p.color};"></div><span>${p.label}</span></div>`).join("")}
-        ${Object.entries(SCAFFOLD_PARTS).filter(([k])=>sGridRef.current.some(r=>r.includes(k))).map(([k,p])=>`<div class="legend-item"><div class="legend-box" style="background:${p.color};"></div><span>${p.label}</span></div>`).join("")}
-      </div>
-    </div>
-  </div>
-
-  <!-- 右列：積算＋確認事項 -->
-  <div>
-    <div class="section-title">💰 部材積算</div>
-    <table style="margin-bottom:8px;">
-      <tr><th>部材名</th><th>数量</th><th>単位</th><th>単価</th><th>金額</th></tr>
-      ${partRows}
-      <tr class="total-row">
-        <td colspan="4" style="padding:4px 6px;border:1px solid #ccc;text-align:right;">合計（材料費概算）</td>
-        <td style="padding:4px 6px;border:1px solid #ccc;text-align:right;">¥${totalCost.toLocaleString()}</td>
-      </tr>
-    </table>
-    <div style="font-size:8px;color:#666;margin-bottom:8px;">※労務費・運搬費・諸経費は含みません</div>
-
-    <div class="three-col">
-      <div>
-        <div class="section-title" style="font-size:9px;">現調時確認</div>
-        <table><tr><th>項目</th><th>済</th></tr>${surveyRows}</table>
-        ${damageMemo ? `<div style="margin-top:4px;font-size:8px;border:1px solid #ccc;padding:4px;"><b>破損メモ：</b>${damageMemo}</div>` : ""}
-      </div>
-      <div>
-        <div class="section-title" style="font-size:9px;">架け時確認</div>
-        <table><tr><th>項目</th><th>済</th></tr>${setupRows}</table>
-      </div>
-      <div>
-        <div class="section-title" style="font-size:9px;">払い時確認</div>
-        <table><tr><th>項目</th><th>済</th></tr>${payRows}</table>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>window.onload=()=>{window.print();}</script>
-</body>
-</html>`;
-
-    const w = window.open("","_blank");
-    w.document.write(html);
-    w.document.close();
-  };
-
   return (
-    <div style={{minHeight:"100vh",background:"#0f1923",fontFamily:"'Noto Sans JP','Hiragino Kaku Gothic Pro',sans-serif",color:"#e8edf2",display:"flex",flexDirection:"column"}}>
+    <div style={{height:"100dvh",background:"#0f1923",fontFamily:"'Noto Sans JP','Hiragino Kaku Gothic Pro',sans-serif",color:"#e8edf2",display:"flex",flexDirection:"column",overflow:"hidden"}}>
 
       {/* Header */}
-      <header style={{background:"linear-gradient(135deg,#1a2d42,#0f1923)",borderBottom:"2px solid #2a4a6b",padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:34,height:34,background:"linear-gradient(135deg,#2a7fd4,#1a5fa8)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:900,boxShadow:"0 2px 8px rgba(42,127,212,0.4)"}}>⊞</div>
+      <header style={{background:"linear-gradient(135deg,#1a2d42,#0f1923)",borderBottom:"2px solid #2a4a6b",padding:"8px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{width:30,height:30,background:"linear-gradient(135deg,#2a7fd4,#1a5fa8)",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:900}}>⊞</div>
           <div>
-            <div style={{fontSize:15,fontWeight:700,letterSpacing:1}}>足場プランナー</div>
-            <div style={{fontSize:9,color:"#7a9db8",letterSpacing:2}}>ASHIBA PLANNER</div>
+            <div style={{fontSize:13,fontWeight:700}}>足場プランナー</div>
+            <div style={{fontSize:8,color:"#7a9db8",letterSpacing:2}}>ASHIBA PLANNER</div>
           </div>
         </div>
-        <div style={{display:"flex",gap:6}}>
+        <div style={{display:"flex",gap:5,alignItems:"center"}}>
+          {/* 全体サイズ表示 */}
+          {usedBounds&&(
+            <div style={{fontSize:9,color:"#4aa8e8",background:"#0f1923",border:"1px solid #2a4a6b",borderRadius:6,padding:"2px 8px",textAlign:"center"}}>
+              <div>{(usedBounds.w/1000).toFixed(1)}m</div>
+              <div style={{color:"#7a9db8"}}>×{(usedBounds.h/1000).toFixed(1)}m</div>
+            </div>
+          )}
           {["組立","解体"].map(t=>(
-            <button key={t} onClick={()=>setWorkType(t)} style={{padding:"5px 14px",borderRadius:20,fontSize:12,cursor:"pointer",fontWeight:workType===t?700:400,background:workType===t?(t==="組立"?"#1a5fa8":"#7a1a1a"):"#0f1923",border:workType===t?`1px solid ${t==="組立"?"#2a7fd4":"#e74c3c"}`:"1px solid #2a4a6b",color:workType===t?"#fff":"#7a9db8"}}>{t}</button>
+            <button key={t} onClick={()=>setWorkType(t)} style={{padding:"4px 10px",borderRadius:20,fontSize:11,cursor:"pointer",fontWeight:workType===t?700:400,background:workType===t?(t==="組立"?"#1a5fa8":"#7a1a1a"):"#0f1923",border:workType===t?`1px solid ${t==="組立"?"#2a7fd4":"#e74c3c"}`:"1px solid #2a4a6b",color:workType===t?"#fff":"#7a9db8"}}>{t}</button>
           ))}
         </div>
       </header>
 
       {/* Tabs */}
-      <div style={{display:"flex",background:"#151f2b",borderBottom:"1px solid #1e3048",overflowX:"auto"}}>
+      <div style={{display:"flex",background:"#151f2b",borderBottom:"1px solid #1e3048",flexShrink:0}}>
         {TABS.map(({key,label})=>(
-          <button key={key} onClick={()=>switchTab(key)} style={{flexShrink:0,padding:"11px 13px",background:activeTab===key?"#1a2d42":"transparent",border:"none",borderBottom:activeTab===key?"3px solid #2a7fd4":"3px solid transparent",color:activeTab===key?"#2a7fd4":"#7a9db8",fontSize:11,fontWeight:activeTab===key?700:400,cursor:"pointer",whiteSpace:"nowrap"}}>
+          <button key={key} onClick={()=>setActiveTab(key)} style={{flex:1,padding:"10px 0",background:activeTab===key?"#1a2d42":"transparent",border:"none",borderBottom:activeTab===key?"3px solid #2a7fd4":"3px solid transparent",color:activeTab===key?"#2a7fd4":"#7a9db8",fontSize:10,fontWeight:activeTab===key?700:400,cursor:"pointer"}}>
             {label}
-            {key==="check"&&doneChecks>0&&<span style={{marginLeft:4,fontSize:9,background:"#2d9a6f",color:"#fff",borderRadius:10,padding:"1px 5px"}}>{doneChecks}/{totalChecks}</span>}
           </button>
         ))}
       </div>
 
+      {/* ===== 図面タブ ===== */}
+      {activeTab==="draw"&&(
+        <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+
+          {/* レイヤー切替 */}
+          <div style={{background:"#151f2b",borderBottom:"1px solid #1e3048",padding:"6px 10px",flexShrink:0}}>
+            <div style={{display:"flex",gap:6,marginBottom:6}}>
+              {["building","scaffold"].map(l=>(
+                <button key={l} onClick={()=>{layerRef.current=l;if(l==="building")setBPartUI(bPartRef.current);else setSPartUI(sPartRef.current);redraw();}} style={{flex:1,padding:"5px",borderRadius:8,fontSize:11,cursor:"pointer",background:layerRef.current===l?(l==="building"?"#1a3a5a":"#1a3a2a"):"#0f1923",border:`1px solid ${layerRef.current===l?(l==="building"?"#2a7fd4":"#2d9a6f"):"#2a4a6b"}`,color:layerRef.current===l?"#e8edf2":"#7a9db8",fontWeight:layerRef.current===l?700:400}}>
+                  {l==="building"?"🏠 建物":"⊞ 足場"}
+                </button>
+              ))}
+            </div>
+
+            {/* 部材パレット */}
+            <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+              <div style={{display:"flex",gap:5,minWidth:"max-content",paddingBottom:2}}>
+                {Object.entries(currentParts).map(([key,part])=>(
+                  <button key={key} onClick={()=>{selectPart(key);setDrawMode("draw");}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,padding:"5px 7px",background:currentPartKey===key&&!eraseOn&&drawMode==="draw"?`${part.color}33`:"rgba(255,255,255,0.04)",border:currentPartKey===key&&!eraseOn&&drawMode==="draw"?`2px solid ${part.color}`:"2px solid transparent",borderRadius:8,cursor:"pointer",minWidth:44}}>
+                    <div style={{width:24,height:24,background:part.color,borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:900,color:"#fff"}}>{part.symbol}</div>
+                    <div style={{fontSize:8,color:"#aac",whiteSpace:"nowrap"}}>{part.label.slice(0,4)}</div>
+                  </button>
+                ))}
+
+                {/* テキスト */}
+                <button onClick={()=>{setDrawMode(drawMode==="text"?"draw":"text");setEraseOn(false);eraseModeRef.current=false;}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,padding:"5px 7px",background:drawMode==="text"?"#2a7fd422":"rgba(255,255,255,0.04)",border:drawMode==="text"?"2px solid #2a7fd4":"2px solid transparent",borderRadius:8,cursor:"pointer",minWidth:44}}>
+                  <div style={{width:24,height:24,background:"#2a5a7a",borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12}}>T</div>
+                  <div style={{fontSize:8,color:"#aac"}}>テキスト</div>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* ズームバー */}
+          <div style={{background:"#0f1923",padding:"4px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,borderBottom:"1px solid #1e3048"}}>
+            <div style={{fontSize:9,color:"#5a7a96"}}>1マス＝100mm　{Math.round(scale*100)}%</div>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>setScaleSync(Math.max(MIN_SCALE,Math.round((scaleRef.current-0.5)*20)/20))} style={{width:26,height:26,borderRadius:6,background:"#1a2d42",border:"1px solid #2a4a6b",color:"#e8edf2",fontSize:14,cursor:"pointer"}}>−</button>
+              <button onClick={()=>setScaleSync(Math.min(MAX_SCALE,Math.round((scaleRef.current+0.5)*20)/20))} style={{width:26,height:26,borderRadius:6,background:"#1a2d42",border:"1px solid #2a4a6b",color:"#e8edf2",fontSize:14,cursor:"pointer"}}>＋</button>
+              <button onClick={clearGrid} style={{height:26,padding:"0 8px",borderRadius:6,background:"rgba(192,57,43,0.15)",border:"1px solid #c0392b",color:"#e74c3c",fontSize:10,cursor:"pointer"}}>クリア</button>
+            </div>
+          </div>
+
+          {/* グリッド本体 */}
+          <div ref={gridContainerRef} style={{flex:1,overflow:"auto",position:"relative",WebkitOverflowScrolling:"touch"}}>
+            <div style={{position:"relative",width:GRID_COLS*cellSize,height:GRID_ROWS*cellSize}}>
+
+              {/* キャンバスイベント層 */}
+              <div
+                onMouseDown={drawMode==="text"?onGridClick:onDown}
+                onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
+                onTouchStart={drawMode==="text"?onGridClick:onDown}
+                onTouchMove={onMove} onTouchEnd={onUp}
+                style={{position:"absolute",inset:0,zIndex:9,cursor:interactMode==="scroll"?"grab":drawMode==="text"?"text":eraseOn?"cell":"crosshair",userSelect:"none",touchAction:interactMode==="scroll"?"pan-x pan-y":"none"}}
+              />
+
+              {/* セル描画（SVGで軽量化） */}
+              <svg width={GRID_COLS*cellSize} height={GRID_ROWS*cellSize} style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:11}}>
+                {/* 背景グリッド線 */}
+                {Array.from({length:GRID_COLS+1},(_,ci)=>(
+                  <line key={`vc${ci}`} x1={ci*cellSize} y1={0} x2={ci*cellSize} y2={GRID_ROWS*cellSize}
+                    stroke={ci%10===0?"#2a5a8b":ci%5===0?"#1e3a5a":"#141e2a"} strokeWidth={ci%10===0?0.8:0.4}/>
+                ))}
+                {Array.from({length:GRID_ROWS+1},(_,ri)=>(
+                  <line key={`hr${ri}`} x1={0} y1={ri*cellSize} x2={GRID_COLS*cellSize} y2={ri*cellSize}
+                    stroke={ri%10===0?"#2a5a8b":ri%5===0?"#1e3a5a":"#141e2a"} strokeWidth={ri%10===0?0.8:0.4}/>
+                ))}
+                {/* 建物セル */}
+                {bGridRef.current.map((row,ri)=>row.map((cell,ci)=>{
+                  if(!cell)return null;
+                  const p=BUILDING_PARTS[cell];if(!p)return null;
+                  return <rect key={`b${ri}_${ci}`} x={ci*cellSize} y={ri*cellSize} width={cellSize} height={cellSize} fill={p.color} opacity={0.85}/>;
+                }))}
+                {/* 足場セル */}
+                {sGridRef.current.map((row,ri)=>row.map((cell,ci)=>{
+                  if(!cell)return null;
+                  const p=SCAFFOLD_PARTS[cell];if(!p)return null;
+                  return <rect key={`s${ri}_${ci}`} x={ci*cellSize} y={ri*cellSize} width={cellSize} height={cellSize} fill={p.color} opacity={0.7}/>;
+                }))}
+                {/* 寸法ラベル */}
+                {cellSize>=6&&dims.map(d=>{
+                  const displayMm=dimOverrides[d.key]??d.labelMm;
+                  const x=d.col*cellSize+cellSize/2;
+                  const y=d.row*cellSize+cellSize/2;
+                  return(
+                    <g key={d.key} style={{cursor:eraseOn?"default":"pointer",pointerEvents:"all"}} onClick={e=>{e.stopPropagation();if(!eraseOn)setEditingDim({key:d.key,value:String(displayMm)});}}>
+                      <rect x={x-28} y={y-9} width={56} height={16} rx={3} fill="rgba(0,0,0,0.75)"/>
+                      <text x={x} y={y+4} textAnchor="middle" fontSize={Math.max(6,Math.min(9,cellSize*0.7))} fill="#ffe066" fontWeight="bold">
+                        {displayMm.toLocaleString()+"mm"}
+                      </text>
+                    </g>
+                  );
+                })}
+                {/* テキストボックス */}
+                {textBoxes.map(tb=>(
+                  <g key={tb.id} style={{cursor:eraseOn?"default":"pointer",pointerEvents:"all"}} onClick={e=>{e.stopPropagation();if(!eraseOn)setEditingText({id:tb.id,value:tb.text});}}>
+                    <rect x={tb.col*cellSize-2} y={tb.row*cellSize-2} width={tb.text.length*cellSize*0.6+8} height={cellSize+4} rx={3} fill="rgba(255,255,200,0.15)" stroke="#ffe066" strokeWidth={0.8}/>
+                    <text x={tb.col*cellSize+2} y={tb.row*cellSize+cellSize*0.7} fontSize={Math.max(8,cellSize*0.7)} fill="#ffe066" fontWeight="bold">{tb.text}</text>
+                  </g>
+                ))}
+              </svg>
+            </div>
+          </div>
+
+          {/* 右下フローティング：消しゴム＋描画/移動 */}
+          <div style={{position:"absolute",bottom:16,right:16,zIndex:50,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:8,pointerEvents:"none"}}>
+            {/* 消しゴムボタン */}
+            <button
+              onClick={()=>{const n=!eraseOn;setEraseOn(n);eraseModeRef.current=n;setDrawMode("draw");if(n)setInteractModeSync("draw");}}
+              style={{pointerEvents:"all",width:48,height:48,borderRadius:24,background:eraseOn?"#c0392b":"#1a2d42",border:eraseOn?"2px solid #e74c3c":"2px solid #2a4a6b",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",boxShadow:"0 3px 12px rgba(0,0,0,0.5)",gap:1}}>
+              <span style={{fontSize:18,lineHeight:1}}>✕</span>
+              <span style={{fontSize:7,color:eraseOn?"#fff":"#7a9db8"}}>消去</span>
+            </button>
+            {/* 描画/移動ボタン */}
+            <div style={{pointerEvents:"all",display:"flex",background:"#1a2d42",borderRadius:24,border:"1px solid #2a4a6b",overflow:"hidden",boxShadow:"0 3px 12px rgba(0,0,0,0.5)"}}>
+              {[["draw","✏️","描画","#2a7fd4"],["scroll","👆","移動","#2d9a6f"]].map(([m,icon,label,col])=>(
+                <button key={m} onClick={()=>{setInteractModeSync(m);if(m==="scroll"){setEraseOn(false);eraseModeRef.current=false;}}} style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",width:52,height:52,border:"none",fontSize:11,background:interactMode===m?col+"44":"transparent",color:interactMode===m?col:"#7a9db8",cursor:"pointer",gap:1}}>
+                  <span style={{fontSize:20,lineHeight:1}}>{icon}</span>
+                  <span style={{fontSize:9,fontWeight:interactMode===m?700:400}}>{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 寸法編集ダイアログ */}
+          {editingDim&&(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setEditingDim(null)}>
+              <div style={{background:"#1a2d42",borderRadius:12,padding:20,width:260,border:"1px solid #2a7fd4"}} onClick={e=>e.stopPropagation()}>
+                <div style={{fontSize:13,fontWeight:700,marginBottom:12,color:"#4aa8e8"}}>寸法を編集（mm）</div>
+                <input type="number" value={editingDim.value} step={100} onChange={e=>setEditingDim(d=>({...d,value:e.target.value}))}
+                  style={{...inp,fontSize:18,textAlign:"center",marginBottom:12}} autoFocus/>
+                <div style={{fontSize:10,color:"#5a7a96",marginBottom:12}}>100mm単位で入力（例：1800）</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>{setDimOverrides(o=>({...o,[editingDim.key]:parseInt(editingDim.value)||0}));setEditingDim(null);}} style={{flex:1,padding:"8px",background:"#2a7fd4",border:"none",borderRadius:8,color:"#fff",fontWeight:700,cursor:"pointer"}}>確定</button>
+                  <button onClick={()=>{setDimOverrides(o=>{const n={...o};delete n[editingDim.key];return n;});setEditingDim(null);}} style={{flex:1,padding:"8px",background:"#0f1923",border:"1px solid #2a4a6b",borderRadius:8,color:"#7a9db8",cursor:"pointer"}}>自動に戻す</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* テキスト編集ダイアログ */}
+          {editingText&&(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setEditingText(null)}>
+              <div style={{background:"#1a2d42",borderRadius:12,padding:20,width:280,border:"1px solid #2a7fd4"}} onClick={e=>e.stopPropagation()}>
+                <div style={{fontSize:13,fontWeight:700,marginBottom:12,color:"#4aa8e8"}}>テキストを編集</div>
+                <input type="text" value={editingText.value} onChange={e=>setEditingText(d=>({...d,value:e.target.value}))}
+                  style={{...inp,fontSize:16,marginBottom:12}} autoFocus/>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>{setTextBoxes(p=>p.map(t=>t.id===editingText.id?{...t,text:editingText.value}:t));setEditingText(null);}} style={{flex:1,padding:"8px",background:"#2a7fd4",border:"none",borderRadius:8,color:"#fff",fontWeight:700,cursor:"pointer"}}>確定</button>
+                  <button onClick={()=>{setTextBoxes(p=>p.filter(t=>t.id!==editingText.id));setEditingText(null);}} style={{flex:1,padding:"8px",background:"rgba(192,57,43,0.2)",border:"1px solid #c0392b",borderRadius:8,color:"#e74c3c",cursor:"pointer"}}>削除</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ===== 現場情報 ===== */}
       {activeTab==="info"&&(
-        <div style={{flex:1,padding:"14px 14px 40px",overflowY:"auto"}}>
+        <div style={{flex:1,padding:"12px 12px 40px",overflowY:"auto"}}>
           <div style={card}>
             <div style={{fontSize:11,color:"#4a8ab8",fontWeight:700,letterSpacing:2,marginBottom:12}}>📋 基本情報</div>
             <div style={r2}><Fld label="施工日" val={info.date} onChange={upd("date")} type="date"/><Fld label="車両指定" val={info.vehicle} onChange={upd("vehicle")} ph="例：2t車"/></div>
@@ -589,7 +631,7 @@ export default function App() {
 
       {/* ===== 確認事項 ===== */}
       {activeTab==="check"&&(
-        <div style={{flex:1,padding:"14px 14px 40px",overflowY:"auto"}}>
+        <div style={{flex:1,padding:"12px 12px 40px",overflowY:"auto"}}>
           <div style={{...card,background:"#111f2e"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <div style={{fontSize:12,color:"#7a9db8"}}>全体の確認進捗</div>
@@ -602,220 +644,100 @@ export default function App() {
           <CheckSection def={CHECK_DEFS.survey} checks={surveyChecks} onToggle={toggle(setSurvey)}/>
           <div style={{...card,borderColor:"#e07b3966"}}>
             <div style={{fontSize:12,fontWeight:700,color:"#e07b39",marginBottom:10}}>破損・注意個所詳細</div>
-            <textarea value={damageMemo} onChange={e=>setDmg(e.target.value)} placeholder="破損・注意個所の詳細を記入" rows={4} style={{...inp,resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}/>
+            <textarea value={damageMemo} onChange={e=>setDmg(e.target.value)} placeholder="破損・注意個所の詳細を記入" rows={3} style={{...inp,resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}/>
           </div>
           <CheckSection def={CHECK_DEFS.setup} checks={setupChecks} onToggle={toggle(setSetup)}/>
           <CheckSection def={CHECK_DEFS.payment} checks={payChecks} onToggle={toggle(setPay)}/>
           {doneChecks===totalChecks&&(
-            <div style={{background:"linear-gradient(135deg,#1a3a28,#0f2018)",borderRadius:12,padding:"16px",border:"2px solid #2d9a6f",textAlign:"center",marginBottom:12}}>
-              <div style={{fontSize:24,marginBottom:6}}>✅</div>
+            <div style={{background:"linear-gradient(135deg,#1a3a28,#0f2018)",borderRadius:12,padding:16,border:"2px solid #2d9a6f",textAlign:"center",marginBottom:12}}>
+              <div style={{fontSize:22,marginBottom:4}}>✅</div>
               <div style={{fontSize:14,fontWeight:700,color:"#4ecca3"}}>全項目確認完了</div>
-              <div style={{fontSize:11,color:"#7a9db8",marginTop:4}}>お疲れ様でした</div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* ===== 図面（建物・足場共通） ===== */}
-      {isDrawTab&&(
-        <div style={{flex:1,display:"flex",flexDirection:"column"}}>
-          {/* 部材パレット */}
-          <div style={{padding:"10px 12px",background:"#151f2b",borderBottom:"1px solid #1e3048",overflowX:"auto"}}>
-            <div style={{display:"flex",gap:7,minWidth:"max-content"}}>
-              {Object.entries(currentParts).map(([key,part])=>(
-                <button key={key} onClick={()=>selectPart(key)} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"7px 10px",background:currentPartKey===key?`${part.color}33`:"rgba(255,255,255,0.04)",border:currentPartKey===key?`2px solid ${part.color}`:"2px solid transparent",borderRadius:10,cursor:"pointer",minWidth:56}}>
-                  <div style={{width:28,height:28,background:part.color,borderRadius:6,border:part.border?`2px solid ${part.border}`:"none",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:900,color:"#fff"}}>{part.symbol}</div>
-                  <div style={{fontSize:9,color:"#aac",whiteSpace:"nowrap"}}>{part.label.slice(0,6)}</div>
-                </button>
-              ))}
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
-              <button onClick={()=>{const next=!eraseOn; setEraseOn(next); eraseModeRef.current=next;}} style={{
-                padding:"5px 14px", borderRadius:20, fontSize:11, cursor:"pointer",
-                background: eraseOn?"#c0392b22":"#0f1923",
-                border: eraseOn?"1px solid #c0392b":"1px solid #2a4a6b",
-                color: eraseOn?"#e74c3c":"#7a9db8", fontWeight: eraseOn?700:400,
-              }}>✕ 消しゴム{eraseOn?" ON":""}</button>
-              <span style={{fontSize:10,color:"#3a6a8a"}}>🤏 ピンチ：ズーム</span>
-            </div>
-          </div>
-
-          {/* グリッドエリア */}
-          <div style={{flex:1,overflow:"auto",padding:"12px 8px 16px"}}>
-            {/* ズームバー */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:6}}>
-              <button onClick={()=>changeScale(Math.max(MIN_SCALE,Math.round((scaleRef.current-0.25)*20)/20))} style={{width:28,height:28,borderRadius:6,background:"#1a2d42",border:"1px solid #2a4a6b",color:"#e8edf2",fontSize:16,cursor:"pointer"}}>−</button>
-              <div style={{fontSize:10,color:"#5a7a96",minWidth:140,textAlign:"center"}}>1マス＝{MM_PER_CELL.toLocaleString()}mm | {Math.round(scale*100)}%</div>
-              <button onClick={()=>changeScale(Math.min(MAX_SCALE,Math.round((scaleRef.current+0.25)*20)/20))} style={{width:28,height:28,borderRadius:6,background:"#1a2d42",border:"1px solid #2a4a6b",color:"#e8edf2",fontSize:16,cursor:"pointer"}}>＋</button>
-            </div>
-
-            <div style={{display:"inline-flex",flexDirection:"column",alignItems:"flex-start"}}>
-              {/* 上ルーラー */}
-              <div style={{display:"flex",marginLeft:32}}>
-                {Array.from({length:GRID_COLS},(_,ci)=>(
-                  <div key={ci} style={{width:cellSize,fontSize:7,color:"#4a7a9b",textAlign:"left",lineHeight:"16px",paddingLeft:2,borderLeft:ci%5===0?"1px solid #2a4a6b":"none",flexShrink:0}}>
-                    {ci%5===0?`${(ci*MM_PER_CELL/1000).toFixed(1)}m`:""}
-                  </div>
-                ))}
-              </div>
-              <div style={{display:"flex"}}>
-                {/* 左ルーラー */}
-                <div style={{display:"flex",flexDirection:"column",width:32}}>
-                  {Array.from({length:GRID_ROWS},(_,ri)=>(
-                    <div key={ri} style={{height:cellSize,fontSize:7,color:"#4a7a9b",display:"flex",alignItems:"flex-start",justifyContent:"flex-end",paddingRight:3,paddingTop:2,flexShrink:0,borderTop:ri%5===0?"1px solid #2a4a6b":"none"}}>
-                      {ri%5===0?`${(ri*MM_PER_CELL/1000).toFixed(1)}m`:""}
-                    </div>
-                  ))}
-                </div>
-                {/* グリッド本体 */}
-                <GridCanvas
-                  bGrid={bGridRef.current}
-                  sGrid={sGridRef.current}
-                  cellSize={cellSize}
-                  onPointerDown={onDown}
-                  onPointerMove={onMove}
-                  onPointerUp={onUp}
-                />
-              </div>
-
-              {/* 凡例 */}
-              <div style={{marginTop:8,marginLeft:32,display:"flex",gap:8,flexWrap:"wrap"}}>
-                {[
-                  ...Object.entries(BUILDING_PARTS).filter(([k])=>bGridRef.current.some(r=>r.includes(k))),
-                  ...Object.entries(SCAFFOLD_PARTS).filter(([k])=>sGridRef.current.some(r=>r.includes(k))),
-                ].map(([k,p])=>(
-                  <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
-                    <div style={{width:10,height:10,background:p.color,borderRadius:2,border:p.border?`1px solid ${p.border}`:"none"}}/>
-                    <span style={{fontSize:9,color:"#7a9db8"}}>{p.label}</span>
-                  </div>
-                ))}
-              </div>
-              <button onClick={clearGrid} style={{marginTop:10,marginLeft:32,padding:"7px 18px",background:"rgba(192,57,43,0.15)",border:"1px solid #c0392b",borderRadius:8,color:"#e74c3c",fontSize:11,cursor:"pointer"}}>
-                {activeTab==="building"?"建物をクリア":"足場をクリア"}
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
       {/* ===== 積算 ===== */}
       {activeTab==="estimate"&&(
-        <div style={{flex:1,padding:14,display:"flex",flexDirection:"column",gap:12,overflowY:"auto"}}>
+        <div style={{flex:1,padding:12,display:"flex",flexDirection:"column",gap:10,overflowY:"auto"}}>
           <div style={card}>
             <div style={{fontSize:11,color:"#4a8ab8",fontWeight:700,letterSpacing:2,marginBottom:8}}>⚙️ 設定</div>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
               <span style={{fontSize:13}}>階数</span>
-              <button onClick={()=>setFloors(f=>Math.max(1,f-1))} style={{width:32,height:32,borderRadius:8,background:"#0f1923",border:"1px solid #2a4a6b",color:"#e8edf2",fontSize:18,cursor:"pointer"}}>−</button>
-              <span style={{fontSize:20,fontWeight:700,minWidth:28,textAlign:"center"}}>{floors}</span>
-              <button onClick={()=>setFloors(f=>Math.min(20,f+1))} style={{width:32,height:32,borderRadius:8,background:"#0f1923",border:"1px solid #2a4a6b",color:"#e8edf2",fontSize:18,cursor:"pointer"}}>＋</button>
-              <span style={{fontSize:12,color:"#7a9db8"}}>階建て</span>
+              <button onClick={()=>setFloors(f=>Math.max(1,f-1))} style={{width:30,height:30,borderRadius:7,background:"#0f1923",border:"1px solid #2a4a6b",color:"#e8edf2",fontSize:16,cursor:"pointer"}}>−</button>
+              <span style={{fontSize:18,fontWeight:700,minWidth:24,textAlign:"center"}}>{floors}</span>
+              <button onClick={()=>setFloors(f=>Math.min(20,f+1))} style={{width:30,height:30,borderRadius:7,background:"#0f1923",border:"1px solid #2a4a6b",color:"#e8edf2",fontSize:16,cursor:"pointer"}}>＋</button>
+              <span style={{fontSize:11,color:"#7a9db8"}}>階建て</span>
             </div>
           </div>
-          {info.siteName&&(
-            <div style={{...card,background:"#111f2e"}}>
-              <div style={{fontSize:13,fontWeight:700}}>{info.siteName}</div>
-              {info.date&&<div style={{fontSize:11,color:"#7a9db8",marginTop:2}}>📅 {info.date}</div>}
-              {kojiContents.length>0&&<div style={{fontSize:11,color:"#7a9db8",marginTop:2}}>🔨 {kojiContents.join("・")}</div>}
-            </div>
-          )}
           <div style={card}>
             <div style={{fontSize:11,color:"#4a8ab8",fontWeight:700,letterSpacing:2,marginBottom:10}}>📦 部材明細・単価設定</div>
-            {!hasScaffold&&<div style={{fontSize:13,color:"#5a7a96",textAlign:"center",padding:"16px 0"}}>足場タブで部材を配置してください</div>}
+            {!hasScaffold&&<div style={{fontSize:13,color:"#5a7a96",textAlign:"center",padding:"12px 0"}}>足場レイヤーで部材を配置してください</div>}
             {Object.entries(SCAFFOLD_PARTS).map(([key,part])=>{
-              const cnt=adjCounts[key];
-              const unitPrice=prices[key]||0;
-              const subtotal=cnt*unitPrice;
-              return (
+              const cnt=adjCounts[key];const unitPrice=prices[key]||0;
+              return(
                 <div key={key} style={{padding:"10px 0",borderBottom:"1px solid #1e3048"}}>
-                  {/* 部材名と小計 */}
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <div style={{width:24,height:24,background:part.color,borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:900,color:"#fff"}}>{part.symbol}</div>
-                      <div>
-                        <div style={{fontSize:13,fontWeight:600}}>{part.label}</div>
-                        <div style={{fontSize:10,color:"#5a7a96"}}>{cnt>0?`${cnt}${part.unit}`:"未配置"}</div>
-                      </div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
+                    <div style={{display:"flex",alignItems:"center",gap:7}}>
+                      <div style={{width:22,height:22,background:part.color,borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:900,color:"#fff"}}>{part.symbol}</div>
+                      <div><div style={{fontSize:12,fontWeight:600}}>{part.label}</div><div style={{fontSize:10,color:"#5a7a96"}}>{cnt>0?`${cnt}${part.unit}`:"未配置"}</div></div>
                     </div>
-                    <div style={{fontSize:14,fontWeight:700,color:cnt>0?"#4aa8e8":"#3a5a6a"}}>
-                      {cnt>0?`¥${subtotal.toLocaleString()}`:"—"}
-                    </div>
+                    <div style={{fontSize:13,fontWeight:700,color:cnt>0?"#4aa8e8":"#3a5a6a"}}>{cnt>0?`¥${(cnt*unitPrice).toLocaleString()}`:"—"}</div>
                   </div>
-                  {/* 単価入力 */}
-                  <div style={{display:"flex",alignItems:"center",gap:8,background:"#0f1923",borderRadius:8,padding:"6px 10px",border:"1px solid #2a4a6b"}}>
-                    <span style={{fontSize:11,color:"#7a9db8",whiteSpace:"nowrap"}}>単価</span>
-                    <span style={{fontSize:11,color:"#7a9db8"}}>¥</span>
-                    <input
-                      type="number"
-                      value={unitPrice}
-                      onChange={e=>updatePrice(key,e.target.value)}
-                      style={{flex:1,background:"transparent",border:"none",color:"#e8edf2",fontSize:14,fontWeight:600,outline:"none",textAlign:"right"}}
-                    />
-                    <span style={{fontSize:11,color:"#7a9db8",whiteSpace:"nowrap"}}>/{part.unit}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:6,background:"#0f1923",borderRadius:7,padding:"5px 10px",border:"1px solid #2a4a6b"}}>
+                    <span style={{fontSize:10,color:"#7a9db8",whiteSpace:"nowrap"}}>単価 ¥</span>
+                    <input type="number" value={unitPrice} onChange={e=>updatePrice(key,e.target.value)} style={{flex:1,background:"transparent",border:"none",color:"#e8edf2",fontSize:13,fontWeight:600,outline:"none",textAlign:"right"}}/>
+                    <span style={{fontSize:10,color:"#7a9db8"}}>/{part.unit}</span>
                   </div>
                 </div>
               );
             })}
           </div>
           {hasScaffold&&(
-            <div style={{background:"linear-gradient(135deg,#1a4a7a,#0f2a4a)",borderRadius:12,padding:"14px 18px",border:"2px solid #2a7fd4",boxShadow:"0 4px 20px rgba(42,127,212,0.2)"}}>
-              <div style={{fontSize:11,color:"#7ab8e8",marginBottom:4,letterSpacing:2}}>概算合計金額</div>
-              <div style={{fontSize:26,fontWeight:900,color:"#fff"}}>¥{totalCost.toLocaleString()}</div>
-              <div style={{fontSize:10,color:"#7ab8e8",marginTop:4}}>※材料費概算（労務費・諸経費別途）</div>
+            <div style={{background:"linear-gradient(135deg,#1a4a7a,#0f2a4a)",borderRadius:12,padding:"14px 16px",border:"2px solid #2a7fd4",boxShadow:"0 4px 20px rgba(42,127,212,0.2)"}}>
+              <div style={{fontSize:10,color:"#7ab8e8",marginBottom:3,letterSpacing:2}}>概算合計金額</div>
+              <div style={{fontSize:24,fontWeight:900,color:"#fff"}}>¥{totalCost.toLocaleString()}</div>
+              <div style={{fontSize:9,color:"#7ab8e8",marginTop:3}}>※材料費概算（労務費・諸経費別途）</div>
             </div>
           )}
-          <div style={{background:"#151f2b",borderRadius:10,padding:"10px 14px",border:"1px solid #1e3048",fontSize:10,color:"#5a7a96",lineHeight:1.9}}>
-            ※ 単価は上の入力欄で変更できます。<br/>
-            ※ 1マス＝1,800mm×1,800mm（1スパン）で計算しています。<br/>
-            ※ 平面配置×階数で概算を自動計算しています。<br/>
-            ※ 労務費・運搬費・諸経費は含みません。
-          </div>
         </div>
       )}
 
       {/* ===== PDF出力 ===== */}
       {activeTab==="pdf"&&(
-        <div style={{flex:1,padding:20,display:"flex",flexDirection:"column",gap:16,overflowY:"auto"}}>
-          <div style={{background:"#1a2d42",borderRadius:12,padding:"16px",border:"1px solid #2a4a6b"}}>
-            <div style={{fontSize:11,color:"#4a8ab8",fontWeight:700,letterSpacing:2,marginBottom:12}}>🖨️ PDF出力内容</div>
+        <div style={{flex:1,padding:16,display:"flex",flexDirection:"column",gap:12,overflowY:"auto"}}>
+          <div style={card}>
+            <div style={{fontSize:11,color:"#4a8ab8",fontWeight:700,letterSpacing:2,marginBottom:12}}>🖨️ 出力内容確認</div>
             {[
-              ["📋 基本情報",info.siteName?"入力済み":"未入力",!!info.siteName],
-              ["🔨 工事内容",kojiContents.length>0?kojiContents.join("・"):"未選択",kojiContents.length>0],
+              ["📋 現場情報",info.siteName||"未入力",!!info.siteName],
               ["📐 建物図面",bGridRef.current.some(r=>r.some(c=>c))?"配置済み":"未配置",bGridRef.current.some(r=>r.some(c=>c))],
               ["⊞ 足場図面",hasScaffold?"配置済み":"未配置",hasScaffold],
-              ["💰 積算",hasScaffold?`¥${totalCost.toLocaleString()}`:"足場未配置",hasScaffold],
+              ["💰 積算",hasScaffold?`¥${totalCost.toLocaleString()}`:"—",hasScaffold],
               ["✅ 確認事項",`${doneChecks}/${totalChecks}項目`,doneChecks>0],
             ].map(([label,val,ok])=>(
-              <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #1e3048"}}>
+              <div key={label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #1e3048"}}>
                 <span style={{fontSize:12}}>{label}</span>
                 <span style={{fontSize:11,color:ok?"#2d9a6f":"#5a7a96",fontWeight:ok?700:400}}>{ok?"✓ ":""}{val}</span>
               </div>
             ))}
           </div>
-
-          <div style={{background:"#151f2b",borderRadius:10,padding:"12px 14px",border:"1px solid #1e3048",fontSize:11,color:"#5a7a96",lineHeight:1.8}}>
-            📄 A3横サイズでの印刷を推奨します。<br/>
-            ブラウザの印刷設定で「用紙サイズ：A3」「横向き」を選択してください。<br/>
-            スマホの場合は「PDFに保存」を選ぶとPDFファイルとして保存できます。
+          <div style={{background:"#151f2b",borderRadius:10,padding:"10px 12px",border:"1px solid #1e3048",fontSize:10,color:"#5a7a96",lineHeight:1.8}}>
+            📄 図面のみA4縦サイズで出力します。<br/>
+            ブラウザの印刷設定で「用紙A4・縦向き」を選択。<br/>
+            スマホは「PDFに保存」でPDFファイルとして保存できます。
           </div>
-
-          <button onClick={printPDF} style={{
-            padding:"16px",borderRadius:12,
-            background:"linear-gradient(135deg,#1a5fa8,#2a7fd4)",
-            border:"none",color:"#fff",fontSize:16,fontWeight:700,
-            cursor:"pointer",letterSpacing:2,
-            boxShadow:"0 4px 16px rgba(42,127,212,0.4)",
-          }}>
-            🖨️　作業指示書を印刷 / PDF保存
+          <button onClick={printPDF} style={{padding:16,borderRadius:12,background:"linear-gradient(135deg,#1a5fa8,#2a7fd4)",border:"none",color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer",letterSpacing:2,boxShadow:"0 4px 16px rgba(42,127,212,0.4)"}}>
+            🖨️　平面図を印刷 / PDF保存
           </button>
         </div>
       )}
 
       {/* Bottom bar */}
-      <div style={{background:"#0f1923",borderTop:"1px solid #1e3048",padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:11,color:"#5a7a96"}}>
+      <div style={{background:"#0f1923",borderTop:"1px solid #1e3048",padding:"6px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10,color:"#5a7a96",flexShrink:0}}>
         <span style={{maxWidth:"55%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{info.siteName||"現場名未入力"}</span>
-        <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          {doneChecks>0&&<span style={{fontSize:10,color:"#2d9a6f"}}>✅ {doneChecks}/{totalChecks}</span>}
-          <span style={{color:hasScaffold?"#4aa8e8":"#5a7a96",fontWeight:hasScaffold?700:400}}>{hasScaffold?`¥${totalCost.toLocaleString()}`:"足場未配置"}</span>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {doneChecks>0&&<span style={{color:"#2d9a6f"}}>✅{doneChecks}/{totalChecks}</span>}
+          <span style={{color:hasScaffold?"#4aa8e8":"#5a7a96",fontWeight:hasScaffold?700:400}}>{hasScaffold?`¥${totalCost.toLocaleString()}`:"未配置"}</span>
         </div>
       </div>
     </div>
